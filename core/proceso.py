@@ -217,16 +217,16 @@ def zip_sede(res: ResultadoSede) -> bytes:
     return buf.getvalue()
 
 
-def zip_global(resultados: list[ResultadoSede]) -> bytes:
-    """Un ZIP con un ZIP por sede, más el reporte general y el log (para la web)."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for r in resultados:
-            if not r.error:
-                z.writestr(f"{carpeta_sede(r.info)}.zip", zip_sede(r))
-        z.writestr("REPORTE_GENERAL.csv", reporte_general(resultados))
-        z.writestr("LOG_EJECUCION.log", log_texto(resultados))
-    return buf.getvalue()
+# def zip_global(resultados: list[ResultadoSede]) -> bytes:
+#     """Un ZIP con un ZIP por sede, más el reporte general y el log (para la web)."""
+#     buf = io.BytesIO()
+#     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+#         for r in resultados:
+#             if not r.error:
+#                 z.writestr(f"{carpeta_sede(r.info)}.zip", zip_sede(r))
+#         z.writestr("REPORTE_GENERAL.csv", reporte_general(resultados))
+#         z.writestr("LOG_EJECUCION.log", log_texto(resultados))
+#     return buf.getvalue()
 
 
 def escribir_local(res: ResultadoSede, salida: Path) -> None:
