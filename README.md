@@ -1,49 +1,84 @@
 # Extracción de actas (sedes)
 
-Dos formas de uso que comparten el mismo núcleo (`core/`):
+Lee las carpetas de las sedes en el PC, encuentra las actas (alcance, entrega, visita), las renombra con su fecha y genera por sede un Excel de equipos y un informe de cambios. El núcleo está en `core/` y el punto de entrada es `local/extraer_local.py`.
 
-- **Local** (`local/extraer_local.py`): lee carpetas del PC y deja las actas renombradas, el Excel de equipos y el informe en `EXTRACCION_ACTAS_<fecha>` dentro de cada sede.
-- **Web** (`web/app.py`): inicia sesión con Microsoft, recibe un enlace de SharePoint de solo vista y devuelve un ZIP.
+## Requisitos
+
+- Windows (el lanzador es `file.bat`; el script en Python funciona en cualquier sistema).
+- Python 3.10 o superior.
+- Tesseract OCR con idioma español, solo para actas escaneadas. Sin él, las actas escaneadas quedan fuera y el log lo avisa.
 
 ## Instalación
 
-```bash
-pip install -r requirements.txt
+Desde la carpeta del proyecto, en PowerShell:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Para el OCR (PDF escaneados) instala **Tesseract** en el equipo con el paquete de idioma español (`spa`):
-`winget install UB-Mannheim.TesseractOCR` y copia `spa.traineddata` (de github.com/tesseract-ocr/tessdata_best) en su carpeta `tessdata`.
+El entorno tiene que llamarse `.venv` y estar en la raíz del proyecto: `file.bat` lo busca ahí.
 
-## Local
+Tesseract (OCR):
 
-```bash
-python local/extraer_local.py
+```powershell
+winget install --id UB-Mannheim.TesseractOCR -e
+# idioma español (el instalador solo trae inglés):
+Invoke-WebRequest https://github.com/tesseract-ocr/tessdata/raw/main/spa.traineddata `
+  -OutFile "$env:LOCALAPPDATA\Programs\Tesseract-OCR\tessdata\spa.traineddata"
 ```
 
-Pide la ruta, procesa todas las sedes encontradas (o la sede, si la ruta ya es una) y escribe dentro de cada sede una carpeta nueva `EXTRACCION_ACTAS_<DD-MM-YYYY_HH-MM-SS>` (una por extracción, así se conserva el historial y nada se sobrescribe) con todas sus actas juntas y sin comprimir, renombradas como `TIPO_ID_DD-MM-YYYY.pdf` (por ejemplo `VISITA_155_01-06-2026.pdf`). Si dos actas coinciden en nombre se añade `_2`, `_3`…
+El programa busca `tesseract.exe` en `C:\Program Files\Tesseract-OCR\` y en `%LOCALAPPDATA%\Programs\Tesseract-OCR\`. Si lo instalas en otra carpeta, agrégala al `PATH`. Si la ruta de instalación es distinta, copia `spa.traineddata` en la carpeta `tessdata` de esa instalación.
 
-## Web
+## Ejecución
 
-1. En Entra ID (Azure Portal) registra una aplicación:
-   - Tipo de cuenta: cuentas de la organización.
-   - Plataforma **Web**, URI de redirección `http://localhost:5000/callback` (o la de tu servidor).
-   - Permiso delegado de Microsoft Graph: `Files.Read.All`.
-   - Crea un secreto de cliente.
-   - Si la organización exige consentimiento de administrador, pídelo.
-2. Exporta las variables:
+**Opción 1 (doble clic):** abre `file.bat`. Comprueba que existan `.venv` y el script, ejecuta la extracción y al final muestra `[SUCCESS]` o `[ERROR]` con el código de salida. La ventana queda abierta hasta que pulses una tecla.
 
-```bash
-export FLASK_SECRET_KEY="cambia-esto"
-export GRAPH_CLIENT_ID="..."
-export GRAPH_CLIENT_SECRET="..."
-export GRAPH_TENANT_ID="..."          # opcional
-export GRAPH_REDIRECT_URI="http://localhost:5000/callback"
-python web/app.py
+**Opción 2 (consola):**
+
+```powershell
+.venv\Scripts\python.exe local\extraer_local.py
 ```
 
-3. Abre `http://localhost:5000`, inicia sesión y pega el enlace de solo vista.
+El programa pide una ruta (puedes pegarla con comillas o sin ellas):
 
-La web solo lee: no escribe ni modifica nada en SharePoint.
+- **Una ubicación con varias sedes:** procesa todas las subcarpetas con nombre de sede.
+- **Una sola sede:** procesa solo esa.
+
+Las carpetas de sede deben llamarse `NNNN-SEDENNN-MUNICIPIO-NOMBRE` (por ejemplo `0155-SEDE155-…`). El ID de la sede sale de ese nombre; si ninguna carpeta lo cumple, el programa termina con un error. Los nombres que no siguen el formato exacto pero se pueden interpretar se procesan igual y quedan con un aviso en el log.
+
+### Qué genera
+
+Dentro de cada sede se crea una carpeta nueva `EXTRACCION_ACTAS_<DD-MM-YYYY_HH-MM-SS>`, una por cada ejecución: las anteriores no se tocan y quedan como historial. Contiene:
+
+- Las actas renombradas como `TIPO_ID_DD-MM-YYYY.pdf` (por ejemplo `VISITA_155_01-06-2026.pdf`). Si dos coinciden en nombre se añade `_2`, `_3`…
+- `EQUIPOS_<ID>.xlsx` e `INFORME_<ID>.txt` (ver [Equipos](#equipos-alcance--entrega)).
+
+Los archivos originales no se modifican.
+
+Al terminar se muestra un resumen por sede (actas encontradas o error). Si una sede no se puede escribir (archivo abierto, OneDrive sincronizando, permisos), las demás se escriben igual.
+
+### Logs
+
+Cada ejecución crea `logs/extraccion_<AAAAMMDD_HHMMSS>.log`:
+
+- En consola solo aparece lo esencial (nivel INFO).
+- En el archivo queda todo el detalle (DEBUG), con las trazas completas de los errores. Es lo primero que conviene revisar si algo falla.
+
+### Códigos de salida
+
+| Código | Significado |
+|---|---|
+| 0 | Todo correcto |
+| 1 | Ruta inválida, sin sedes válidas, error en `reglas.json`, o alguna sede con error |
+| 130 | Cancelado con Ctrl+C durante el proceso (no se escribe nada) |
+
+### Problemas frecuentes
+
+- **`[ERROR] No se encontro el entorno virtual`**: falta `.venv`. Sigue los pasos de [Instalación](#instalación).
+- **Las actas escaneadas no aparecen**: falta Tesseract o el idioma `spa`. Lo confirma el log.
+- **`No encontré carpetas con formato NNNN-SEDENNN-…`**: la ruta no es una sede ni contiene sedes. Revisa los nombres de las carpetas.
+- **Error al escribir una sede**: cierra el Excel o el PDF abiertos de esa sede, o espera a que OneDrive termine de sincronizar, y vuelve a ejecutar.
 
 ## Reglas de identificación
 
@@ -97,23 +132,10 @@ En `EQUIPOS_<ID>.xlsx` todas las hojas empiezan con **ID** (de la carpeta: `0155
 - Hoja **Observaciones**: el texto de la sección de cada acta de soporte, para revisarlo a mano.
 
 Las actas escaneadas necesitan Tesseract (OCR) con el idioma español; sin él quedan fuera y se avisa en el log.
-Las páginas escaneadas de cabeza o de lado se enderezan solas antes de leerlas. Para instalarlo en Windows:
-
-```powershell
-winget install --id UB-Mannheim.TesseractOCR -e
-# idioma español (el instalador solo trae inglés):
-Invoke-WebRequest https://github.com/tesseract-ocr/tessdata/raw/main/spa.traineddata `
-  -OutFile "$env:LOCALAPPDATA\Programs\Tesseract-OCR\tessdata\spa.traineddata"
-```
+Las páginas escaneadas de cabeza o de lado se enderezan solas antes de leerlas. Ver [Instalación](#instalación).
 
 ## Pruebas
 
-```bash
-python -m unittest discover -s tests -v
+```powershell
+.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
-
-## Pendientes y advertencias
-
-- **Vista únicamente:** si SharePoint bloquea la descarga para ese enlace, la web podrá listar carpetas pero no leer los PDF. Hay que probarlo con el enlace real antes de confiar en el resultado.
-- La versión web no se ha probado contra un tenant real; la local sí se probó con datos de prueba.
-- El token de la web se guarda en memoria. Para uso compartido hay que añadir almacenamiento persistente y HTTPS.
