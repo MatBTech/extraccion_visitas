@@ -43,17 +43,26 @@ class FuenteGraph:
         self.sesion = requests.Session()
         self.sesion.headers["Authorization"] = f"Bearer {token}"
 
-    def _get(self, url: str, **kwargs):
-        r = None
-        for intento in range(4):
-            r = self.sesion.get(url, timeout=60, **kwargs)
-            if r.status_code in (429, 503, 504):
-                time.sleep(int(r.headers.get("Retry-After", 2 ** intento)))
+    def _get(self, url: str, intentos: int = 4, **kwargs):
+        """GET con reintentos ante límites de Graph (429/503/504) y cortes de red."""
+        for intento in range(intentos):
+            ultimo = intento == intentos - 1
+            try:
+                r = self.sesion.get(url, timeout=60, **kwargs)
+            except (requests.ConnectionError, requests.Timeout):
+                if ultimo:
+                    raise
+                time.sleep(2 ** intento)
                 continue
+            if r.status_code in (429, 503, 504) and not ultimo:
+                espera = r.headers.get("Retry-After", "")
+                # Retry-After puede venir como fecha HTTP; en ese caso se usa el backoff.
+                time.sleep(int(espera) if espera.isdigit() else 2 ** intento)
+                continue
+            if r.status_code in (401, 403):
+                raise PermissionError(f"Graph {r.status_code}: token vencido o sin permiso para {url}")
             r.raise_for_status()
             return r
-        r.raise_for_status()
-        return r
 
     def _hijos(self, ref: dict) -> list[dict]:
         url = (f"{GRAPH}/drives/{ref['drive']}/items/{ref['id']}/children"
