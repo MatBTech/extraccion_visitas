@@ -1,0 +1,23 @@
+{
+  "palabra_acta": "ACTA",
+  "ubicaciones": [
+    {
+      "salida": "DESPUES_DOCUMENTOS",
+      "ruta": ["DESPUES", "5_DOCUMENTOS"],
+      "recursivo": false,
+      "tipos": ["ALCANCE", "ENTREGA"]
+    },
+    {
+      "salida": "SOPORTE_MEJORA",
+      "ruta": ["SOPORTE DE MEJORA"],
+      "recursivo": true,
+      "tipos": ["ALCANCE", "ENTREGA", "VISITA"]
+    },
+    {
+      "salida": "SOPORTE_TECNICO",
+      "ruta": ["SOPORTE TECNICO"],
+      "recursivo": true,
+      "tipos": ["ALCANCE", "ENTREGA", "VISITA"]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+EXTRACCION_ACTAS/
+.env
