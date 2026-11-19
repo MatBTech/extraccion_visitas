@@ -91,7 +91,15 @@ En `EQUIPOS_<ID>.xlsx` esto agrega:
   anterior); si no, `REVISAR` (suele indicar un acta que falta o que no se pudo leer).
 - Hoja **Observaciones**: el texto de la sección de cada acta de soporte, para revisarlo a mano.
 
-Las actas escaneadas necesitan Tesseract (OCR); sin él quedan fuera y se avisa en el log.
+Las actas escaneadas necesitan Tesseract (OCR) con el idioma español; sin él quedan fuera y se avisa en el log.
+Las páginas escaneadas de cabeza o de lado se enderezan solas antes de leerlas. Para instalarlo en Windows:
+
+```powershell
+winget install --id UB-Mannheim.TesseractOCR -e
+# idioma español (el instalador solo trae inglés):
+Invoke-WebRequest https://github.com/tesseract-ocr/tessdata/raw/main/spa.traineddata `
+  -OutFile "$env:LOCALAPPDATA\Programs\Tesseract-OCR\tessdata\spa.traineddata"
+```
 
 ## Pruebas
 

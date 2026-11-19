@@ -107,6 +107,13 @@ def ocr_pdf(datos: bytes) -> str:
         for pagina in doc:
             pix = pagina.get_pixmap(dpi=300)
             imagen = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            # Hay páginas escaneadas de cabeza o de lado: se enderezan con el detector de orientación (osd).
+            try:
+                giro = pytesseract.image_to_osd(imagen, output_type=pytesseract.Output.DICT)["rotate"]
+            except pytesseract.TesseractError:  # página casi vacía: no se puede detectar
+                giro = 0
+            if giro:
+                imagen = imagen.rotate(-giro, expand=True)
             partes.append(pytesseract.image_to_string(imagen, lang="spa"))
     return "\n".join(partes)
 
