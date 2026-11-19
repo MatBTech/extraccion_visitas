@@ -10,18 +10,60 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
 
-from core.fuentes import FuenteLocal  # noqa: E402
-from core.proceso import cargar_reglas, escribir_local, procesar  # noqa: E402
-from core.texto import parsear_sede  # noqa: E402
+
+
+log = logging.getLogger("actas")
+
+
+def configurar_logging() -> Path:
+    """Consola: INFO (lo esencial). Archivo logs/extraccion_FECHA.log: DEBUG (todo el detalle + trazas)."""
+    carpeta = RAIZ / "logs"
+    carpeta.mkdir(exist_ok=True)
+    archivo = carpeta / f"extraccion_{datetime.now():%Y%m%d_%H%M%S}.log"
+
+    consola = logging.StreamHandler()
+    consola.setLevel(logging.INFO)
+    consola.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", "%H:%M:%S"))
+
+    en_archivo = logging.FileHandler(archivo, encoding="utf-8")
+    en_archivo.setLevel(logging.DEBUG)
+    en_archivo.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s [%(module)s:%(lineno)d] %(message)s"))
+
+    raiz = logging.getLogger()
+    raiz.setLevel(logging.DEBUG)
+    raiz.addHandler(consola)
+    raiz.addHandler(en_archivo)
+    # Librerías ruidosas en DEBUG (PIL, urllib3...) solo desde WARNING.
+    for nombre in ("PIL", "urllib3", "pytesseract"):
+        logging.getLogger(nombre).setLevel(logging.WARNING)
+
+    # Cualquier error no capturado queda en el archivo con su traza completa.
+    def _no_capturada(tipo, valor, traza):
+        if issubclass(tipo, KeyboardInterrupt):
+            sys.__excepthook__(tipo, valor, traza)
+            return
+        log.critical("Error no controlado", exc_info=(tipo, valor, traza))
+    sys.excepthook = _no_capturada
+    return archivo
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    archivo_log = configurar_logging()
+    inicio = time.perf_counter()
+    log.info("Inicio. Log detallado en: %s", archivo_log)
+    log.debug("Python %s | ejecutable %s", sys.version.split()[0], sys.executable)
+    # Se importan aquí para que una dependencia faltante quede registrada en el log.
+    from core.fuentes import FuenteLocal
+    from core.proceso import cargar_reglas, escribir_local, procesar
+    from core.texto import parsear_sede
 
     try:
         entrada = input("Ruta de la carpeta (ubicación con sedes o una sede): ")
@@ -29,7 +71,9 @@ def main() -> None:
         print("\nCancelado.")
         sys.exit(1)
     ruta = Path(entrada.strip().strip('"')).expanduser()
+    log.info("Ruta ingresada: %s", ruta)
     if not ruta.is_dir():
+        log.error("La ruta no existe o no es una carpeta: %s", ruta)
         print("La ruta no existe o no es una carpeta.")
         sys.exit(1)
 
@@ -40,29 +84,32 @@ def main() -> None:
         try:
             sedes = [(i, p) for p in sorted(ruta.iterdir()) if p.is_dir() and (i := parsear_sede(p.name))]
         except OSError as e:
+            log.exception("No se pudo listar %s", ruta)
             print(f"No se pudo leer la carpeta: {e}")
             sys.exit(1)
 
     if not sedes:
         # El ID de la sede sale del nombre de la carpeta; sin él no se pueden reconocer las actas.
+        log.error("Sin sedes válidas en %s", ruta)
         print("No encontré carpetas con formato NNNN-SEDENNN-MUNICIPIO-NOMBRE.")
         sys.exit(1)
     for (info, r) in sedes:
         if info["estandar"] != r.name:
-            print(f"  Nombre no estándar: '{r.name}' -> se procesa como '{info['estandar']}'")
-    print(f"Sedes a procesar: {len(sedes)}")
+            log.warning("Nombre no estándar: '%s' -> se procesa como '%s'", r.name, info["estandar"])
+    log.info("Sedes a procesar: %d", len(sedes))
 
     try:
         reglas = cargar_reglas(RAIZ / "reglas.json")
     except ValueError as e:
-        print(f"Error en las reglas: {e}")
+        log.error("Error en las reglas: %s", e)
         sys.exit(1)
 
-    print("\nProcesando...")
+    log.info("Reglas cargadas: %d ubicaciones", len(reglas["ubicaciones"]))
+    log.info("Procesando...")
     try:
         resultados = procesar(fuente, sedes, reglas)
     except KeyboardInterrupt:
-        print("\nCancelado; no se escribió nada.")
+        log.warning("Cancelado por el usuario; no se escribió nada.")
         sys.exit(130)
 
     errores_escritura = {}
@@ -72,7 +119,9 @@ def main() -> None:
         # Una sede bloqueada (archivo abierto, OneDrive, permisos) no impide escribir las demás.
         try:
             escribir_local(r, ruta_sede / "EXTRACCION_ACTAS")
+            log.debug("Escritas %d actas en %s", len(r.archivos), ruta_sede / "EXTRACCION_ACTAS")
         except OSError as e:
+            log.exception("No se pudo escribir la sede %s", r.info["id"])
             errores_escritura[r.info["id"]] = f"no se pudo escribir en {ruta_sede}: {e}"
 
     print("\nResumen:")
@@ -83,10 +132,14 @@ def main() -> None:
             print(f"  ID {r.info['id']}: ERROR - {errores_escritura[r.info['id']]}")
         else:
             avisos = sum(1 for linea in r.log if "ERROR en la ubicación" in linea)
-            extra = f" ({avisos} ubicaciones con error, ver LOG_EJECUCION.log)" if avisos else ""
+            extra = f" ({avisos} ubicaciones con error, ver {archivo_log.name})" if avisos else ""
             print(f"  ID {r.info['id']}: {len(r.filas)} actas encontradas{extra}")
     print("\nResultados en la carpeta EXTRACCION_ACTAS de cada sede.")
-    if errores_escritura or any(r.error for r in resultados):
+    hubo_error = bool(errores_escritura or any(r.error for r in resultados))
+    log.info("Fin en %.1f s. Sedes: %d, actas: %d, con error: %s. Log: %s",
+             time.perf_counter() - inicio, len(resultados), sum(len(r.filas) for r in resultados),
+             "SÍ" if hubo_error else "no", archivo_log)
+    if hubo_error:
         sys.exit(1)
 
 
