@@ -4,6 +4,9 @@ Toma la tabla de equipos de cada acta, relaciona los nombres por palabras clave
 ('AP Outdoor' en el alcance = 'SERIAL_APOUTDOOR_CAMBIUMNETWORKS' en la entrega),
 conserva el acta más reciente y compara contra ella las más antiguas.
 El cruce entre actas se hace por serial, no por la posición en la tabla.
+
+Además lee las OBSERVACIONES de las actas de soporte (técnico / de mejora) en orden de fecha
+y saca los equipos a los que se les cambió el serial (sale X, entra Y).
 """
 from __future__ import annotations
 
@@ -120,22 +123,144 @@ def _txt(f) -> str:
     return f.strftime("%d-%m-%Y") if f else "FECHA_PENDIENTE"
 
 
-def excel_bytes(actual: dict) -> bytes:
-    """Hoja 'Equipos': Fuente (ALCANCE/ENTREGA), Fecha, Nombre, Marca y Serial del acta más reciente."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
+# --- Cambios de serial descritos en OBSERVACIONES (actas de soporte técnico / de mejora) ---
 
-    libro = Workbook()
-    hoja = libro.active
-    hoja.title = "Equipos"
-    hoja.append(COLUMNAS_TABLA)
+INICIO_OBS = re.compile(r"OBSERVACIONES\s*(?:\(\s*LETRA\s+LEGIBLE\s*\))?\s*:?", re.IGNORECASE)
+FIN_OBS = re.compile(r"SOPORTES\s+DE\s+LA\s+INSTALACI|SE\s+INFORMA\s+AL\s+DOCENTE|L[IÍ]NEA\s+DE\s+ATENCI"
+                     r"|ACTA\s+DE\s+ALCANCE\s*-\s*CONTRATO|NOTA\s*:", re.IGNORECASE)
+# Palabras justo antes de un serial que dicen si ese equipo sale o entra. Gana la más cercana al serial.
+SALE = {"SALE", "RETIRADO", "RETIRADA", "RETIRA", "RETIRO", "DANO", "DANADO", "DANADA", "QUEMADO", "QUEMADA",
+        "AVERIADO", "AVERIADA", "REEMPLAZO", "REEMPLAZA", "ANTERIOR"}
+ENTRA = {"ENTRA", "INSTALADO", "INSTALADA", "INSTALA", "INSTALAR", "INSTALO", "NUEVO", "POR"}
+VENTANA_OBS = 12  # palabras antes del serial que se revisan
+
+
+def observaciones_desde_texto(texto: str) -> str | None:
+    """Texto de la sección OBSERVACIONES del acta (None si el acta no la tiene)."""
+    ini = INICIO_OBS.search(texto)
+    if not ini:
+        return None
+    fin = FIN_OBS.search(texto, ini.end())
+    return " ".join(texto[ini.end():fin.start() if fin else len(texto)].split())
+
+
+def cambios_desde_observaciones(obs: str, reglas: dict) -> list[dict]:
+    """[{'Equipo', 'Serial retirado', 'Serial instalado'}] según lo que digan las observaciones.
+
+    'sale X entra Y', 'reemplazo del Mikrotik X por el Mikrotik Y', 'Mikrotik retirado: X. Mikrotik instalado: Y',
+    'daño en el POE con serial X, reemplazado por el POE con serial Y'...
+    """
+    tokens = [t.strip(".,;:()[]\"'•") for t in obs.split()]
+    seriales, previo = [], 0
+    for i, t in enumerate(tokens):
+        if not _es_serial(t, set()):
+            continue
+        contexto = [_clave(p) for p in tokens[max(previo, i - VENTANA_OBS):i]]
+        previo = i + 1
+        sentido = next((s for p in reversed(contexto) for s, pal in (("sale", SALE), ("entra", ENTRA)) if p in pal), None)
+        if sentido:  # un serial sin palabra que lo explique (p. ej. una tabla tras las observaciones) se ignora
+            equipo = _ultima_clave("".join(contexto), reglas["equipos"], "claves")[0]
+            seriales.append((sentido, t.upper(), equipo["nombre"] if equipo else ""))
+
+    # Cada serial que sale se empareja con el siguiente que entra (del mismo equipo si se puede).
+    cambios, pendientes = [], []
+    for sentido, serial, equipo in seriales:
+        if sentido == "sale":
+            pendientes.append({"Equipo": equipo, "Serial retirado": serial, "Serial instalado": ""})
+            continue
+        par = next((p for p in pendientes if equipo and p["Equipo"] == equipo), pendientes[0] if pendientes else None)
+        if par:
+            pendientes.remove(par)
+            par.update({"Serial instalado": serial, "Equipo": par["Equipo"] or equipo})
+            cambios.append(par)
+        else:
+            cambios.append({"Equipo": equipo, "Serial retirado": "", "Serial instalado": serial})
+    return cambios + pendientes
+
+
+def seguir_cambios(actas: list[dict], cambios: list[dict]) -> dict[tuple[str, str], str]:
+    """Recorre los cambios (ya en orden de fecha) y marca en 'Verificación' si el serial retirado era uno
+    instalado antes (en un alcance/entrega anterior o en un cambio previo).
+    Devuelve {(llave del serial original, equipo): serial vigente} para actualizar la tabla de equipos;
+    la cadena X -> Y -> Z solo sigue cambios del mismo equipo.
+    """
+    conocidos = {}  # llave -> fecha en que se vio instalado por primera vez
+    for a in actas:
+        for e in a["equipos"]:
+            k = _llave_serial(e["Serial"])
+            conocidos[k] = min(conocidos.get(k, dt.date.max), a["fecha"] or dt.date.min)
+    reemplazo = {}
+    for c in cambios:
+        ret, ins = c["Serial retirado"], c["Serial instalado"]
+        notas = []
+        if not ret:
+            notas.append("no se indica el serial retirado")
+        elif (visto := conocidos.get(_llave_serial(ret))) is None or (c["Fecha"] and visto > c["Fecha"]):
+            notas.append("el serial retirado no figura instalado antes (¿falta un acta?)")
+        if not ins:
+            notas.append("no se indica el serial instalado")
+        if not c["Equipo"]:
+            notas.append("no se identificó el equipo")
+        c["Verificación"] = "OK" if not notas else "REVISAR: " + "; ".join(notas)
+        if ins:
+            conocidos.setdefault(_llave_serial(ins), c["Fecha"] or dt.date.min)
+            if ret:
+                reemplazo[(_llave_serial(ret), c["Equipo"])] = ins
+
+    vigente = {}
+    for (k, equipo), serial in reemplazo.items():
+        vistos = {k}
+        while (s := _llave_serial(serial)) in {x for x, eq in reemplazo if eq == equipo} - vistos:  # X -> Y -> Z
+            vistos.add(s)
+            serial = reemplazo[(s, equipo)]
+        vigente[(k, equipo)] = serial
+    return vigente
+
+
+COLUMNAS_CAMBIOS = ["Fecha", "Acta", "Soporte", "Equipo", "Serial retirado", "Serial instalado", "Verificación"]
+
+
+def _hoja(libro, titulo: str, columnas: list[str], filas: list[list], primera: bool = False):
+    from openpyxl.styles import Alignment, Font
+
+    hoja = libro.active if primera else libro.create_sheet()
+    hoja.title = titulo
+    hoja.append(columnas)
     for celda in hoja[1]:
         celda.font = Font(bold=True)
-    for e in actual["equipos"]:
-        hoja.append([actual["tipo"], _txt(actual["fecha"]), e["Nombre"], e["Marca"], e["Serial"]])
+    for fila in filas:
+        hoja.append(fila)
     for col in hoja.columns:
-        hoja.column_dimensions[col[0].column_letter].width = max(len(str(c.value)) for c in col) + 2
+        ancho = max(len(str(c.value or "")) for c in col) + 2
+        hoja.column_dimensions[col[0].column_letter].width = min(ancho, 80)
+        if ancho > 80:
+            for c in col[1:]:
+                c.alignment = Alignment(wrap_text=True, vertical="top")
     hoja.freeze_panes = "A2"
+
+
+def excel_bytes(actual: dict | None, cambios: list[dict] = (), observaciones: list[dict] = (),
+                vigente: dict[tuple[str, str], str] | None = None) -> bytes:
+    """Hoja 'Equipos' (acta de alcance/entrega más reciente, con el serial vigente tras los soportes),
+    'Cambios de serial' (en orden de fecha) y 'Observaciones' (texto de cada acta de soporte)."""
+    from openpyxl import Workbook
+
+    libro = Workbook()
+    columnas = COLUMNAS_TABLA + (["Serial vigente"] if vigente is not None else [])
+    filas = []
+    for e in actual["equipos"] if actual else []:
+        fila = [actual["tipo"], _txt(actual["fecha"]), e["Nombre"], e["Marca"], e["Serial"]]
+        if vigente is not None:
+            k = _llave_serial(e["Serial"])
+            fila.append(vigente.get((k, e["Nombre"])) or vigente.get((k, "")) or e["Serial"])
+        filas.append(fila)
+    _hoja(libro, "Equipos", columnas, filas, primera=True)
+    if cambios or observaciones:
+        _hoja(libro, "Cambios de serial", COLUMNAS_CAMBIOS,
+              [[_txt(c["Fecha"]), c["Acta"], c["Soporte"], c["Equipo"], c["Serial retirado"],
+                c["Serial instalado"], c["Verificación"]] for c in cambios])
+        _hoja(libro, "Observaciones", ["Fecha", "Acta", "Soporte", "Cambios detectados", "Observaciones"],
+              [[_txt(o["Fecha"]), o["Acta"], o["Soporte"], o["Cambios"], o["Texto"]] for o in observaciones])
     buf = io.BytesIO()
     libro.save(buf)
     return buf.getvalue()

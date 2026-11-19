@@ -10,7 +10,8 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
 
-from core.equipos import comparar, equipos_desde_texto, excel_bytes, informe_bytes  # noqa: E402
+from core.equipos import (cambios_desde_observaciones, comparar, equipos_desde_texto, excel_bytes,  # noqa: E402
+                          informe_bytes, observaciones_desde_texto, seguir_cambios)
 from core.fechas import extraer_fecha_pdf, fecha_desde_texto  # noqa: E402
 from core.fuentes import FuenteLocal  # noqa: E402
 from core.proceso import cargar_reglas, escribir_local, procesar  # noqa: E402
@@ -249,6 +250,88 @@ class TestProcesoLocal(unittest.TestCase):
         mala.write_text("{", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "no es JSON válido"):
             cargar_reglas(mala)
+
+
+# Observaciones reales de las visitas de soporte técnico de la sede 155.
+VISITA_01_06 = """CONTRATO 24IA151F1473 DE 2024 - 2026
+OBSERVACIONES (Letra Legible):
+Se realiza visita técnica a la sede, donde se evidencia que el equipo Outdoor llevaba
+varios días inoperativo. Durante la inspección se identifica daño en el POE con serial
+G1T04HB002526, el cual es reemplazado por el POE con serial
+N000900L017B2213003016.
+Adicionalmente, se verifica que el equipo Outdoor se encuentra quemado (serial
+WBBH01CZQ0BZ), por lo que se procede a instalar un nuevo equipo Outdoor con serial
+WBBH00TK3Q3G.
+se adjunta en un anexo 1 la nueva foto
+Punto PoE
+N/A
+G1T04HB002547
+Se informa al docente acerca del servicio de Mesa de Ayuda"""
+VISITA_02_09 = """OBSERVACIONES (Letra Legible):
+Se realiza soporte técnico a la sede con el objetivo de restablecer completamente el
+servicio de conectividad. Durante la intervención, se procede al reemplazo del Mikrotik
+HF509772NNG/337/r4 por el Mikrotik HJX0AWM8JDB/r4, logrando recuperar la
+operación de la infraestructura de red."""
+VISITA_04_11 = """OBSERVACIONES (Letra Legible):
+reemplazo del equipo Mikrotik quemado, con la siguiente novedad:
+•
+Mikrotik retirado: HJX0AWM8JDB/r4.
+•
+Mikrotik instalado: HKF0AXDRQ9H/r4.
+Posteriormente, se realizan las validaciones de los equipos conectados, identificando
+que el AP Outdoor se encuentra quemado, por lo cual se procede a su reemplazo:
+•
+AP Outdoor retirado: WBBM0322FZ9H.
+•
+AP Outdoor instalado: WBCA05QRCH4L.
+Acta de Alcance - Contrato 24IA151F1473 – 2024-2026 Página 3"""
+
+
+def _cambios(texto):
+    return [(c["Equipo"], c["Serial retirado"], c["Serial instalado"])
+            for c in cambios_desde_observaciones(observaciones_desde_texto(texto), REGLAS)]
+
+
+class TestObservaciones(unittest.TestCase):
+    def test_sale_entra(self):
+        self.assertEqual(_cambios(ALCANCE), [("", "W4ZC0LWHTZVQ", "WBBH01CZQ0BZ")])
+
+    def test_reemplazado_por_e_instalar_nuevo(self):
+        # El serial de la tabla tras las observaciones (G1T04HB002547) no es un cambio.
+        self.assertEqual(_cambios(VISITA_01_06), [("Punto PoE", "G1T04HB002526", "N000900L017B2213003016"),
+                                                  ("AP Outdoor", "WBBH01CZQ0BZ", "WBBH00TK3Q3G")])
+
+    def test_reemplazo_del_x_por_el_y(self):
+        self.assertEqual(_cambios(VISITA_02_09), [("Router", "HF509772NNG/337/R4", "HJX0AWM8JDB/R4")])
+
+    def test_retirado_instalado(self):
+        self.assertEqual(_cambios(VISITA_04_11), [("Router", "HJX0AWM8JDB/R4", "HKF0AXDRQ9H/R4"),
+                                                  ("AP Outdoor", "WBBM0322FZ9H", "WBCA05QRCH4L")])
+
+    def test_sin_observaciones(self):
+        self.assertIsNone(observaciones_desde_texto("ACTA DE VISITA sin esa sección"))
+
+    def test_orden_cronologico_verifica_y_da_serial_vigente(self):
+        from openpyxl import load_workbook
+
+        alcance = {"archivo": "A.pdf", "tipo": "ALCANCE", "fecha": dt.date(2026, 2, 6),
+                   "equipos": equipos_desde_texto(ALCANCE, REGLAS)}
+        cambios = []
+        for fecha, texto in [(dt.date(2026, 6, 1), VISITA_01_06), (dt.date(2026, 9, 2), VISITA_02_09),
+                             (dt.date(2026, 11, 4), VISITA_04_11)]:
+            for c in cambios_desde_observaciones(observaciones_desde_texto(texto), REGLAS):
+                cambios.append({**c, "Fecha": fecha, "Acta": "V.pdf", "Soporte": "SOPORTE_TECNICO"})
+        vigente = seguir_cambios([alcance], cambios)
+        self.assertEqual([c["Verificación"] for c in cambios][:4], ["OK"] * 4)
+        # El Outdoor retirado el 04/11 nunca figuró instalado: falta un acta intermedia.
+        self.assertIn("no figura instalado antes", cambios[4]["Verificación"])
+
+        libro = load_workbook(io.BytesIO(excel_bytes(alcance, cambios, [], vigente)))
+        equipos = {f[2] + f[4]: f[5] for f in libro["Equipos"].iter_rows(min_row=2, values_only=True)}
+        self.assertEqual(equipos["RouterHF509772NNG/337/R4"], "HKF0AXDRQ9H/R4")  # dos cambios seguidos
+        self.assertEqual(equipos["AP OutdoorWBBH01CZQ0BZ"], "WBBH00TK3Q3G")
+        self.assertEqual(equipos["AP IndoorW4ZC0LWHTZVQ"], "W4ZC0LWHTZVQ")  # sin cambios: el mismo
+        self.assertEqual(len(list(libro["Cambios de serial"].iter_rows())), 6)
 
 
 if __name__ == "__main__":

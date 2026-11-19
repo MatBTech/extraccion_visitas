@@ -76,6 +76,23 @@ Los nombres se relacionan por palabras clave definidas en `reglas.json` (`equipo
 `AP Outdoor` del alcance = `SERIAL_APOUTDOOR_CAMBIUMNETWORKS_…` de la entrega. Para un equipo nuevo, añade su clave allí.
 Al comparar seriales, `O`/`0` e `I`/`1` se consideran iguales (errores típicos del OCR).
 
+## Cambios de serial (soporte técnico / soporte de mejora)
+
+Las actas de `SOPORTE TECNICO` y `SOPORTE DE MEJORA` se leen **de la más antigua a la más reciente**
+(las que no tienen fecha, al final). De cada una se toma la sección `OBSERVACIONES` y se buscan los seriales:
+según la palabra que va justo antes, el serial **sale** (`sale`, `retirado`, `daño`, `quemado`, `reemplazo del`…)
+o **entra** (`entra`, `instalado`, `por el`, `nuevo`…). Cada serial que sale se empareja con el siguiente que entra.
+
+En `EQUIPOS_<ID>.xlsx` esto agrega:
+
+- Columna **Serial vigente** en la hoja `Equipos`: el serial tras aplicar todos los cambios del mismo equipo (X → Y → Z).
+- Hoja **Cambios de serial**: Fecha / Acta / Soporte / Equipo / Serial retirado / Serial instalado / Verificación.
+  `Verificación` es `OK` si el serial retirado figuraba instalado antes (en un alcance/entrega o en un cambio
+  anterior); si no, `REVISAR` (suele indicar un acta que falta o que no se pudo leer).
+- Hoja **Observaciones**: el texto de la sección de cada acta de soporte, para revisarlo a mano.
+
+Las actas escaneadas necesitan Tesseract (OCR); sin él quedan fuera y se avisa en el log.
+
 ## Pruebas
 
 ```bash

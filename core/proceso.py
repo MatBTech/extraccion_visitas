@@ -16,7 +16,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .equipos import comparar, equipos_desde_texto, excel_bytes, informe_bytes
+from .equipos import (cambios_desde_observaciones, comparar, equipos_desde_texto, excel_bytes, informe_bytes,
+                      observaciones_desde_texto, seguir_cambios)
 from .fechas import extraer_fecha_pdf, texto_pdf
 from .texto import carpeta_sede, clave_carpeta, es_acta, fecha_desde_cadena, fecha_desde_nombre
 
@@ -156,29 +157,80 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
     return fila
 
 
+SOPORTES = ("SOPORTE_TECNICO", "SOPORTE_MEJORA")
+
+
+def _fecha_fila(f: dict):
+    return None if f["FECHA_ACTA"] == "FECHA_PENDIENTE" else dt.datetime.strptime(f["FECHA_ACTA"], "%d-%m-%Y").date()
+
+
 def _tablas_equipos(res: ResultadoSede, reglas: dict) -> list[tuple[str, bytes]]:
-    """EQUIPOS_<id>.xlsx (acta de alcance/entrega más reciente) e INFORME_<id>.txt (cambios frente a las anteriores)."""
+    """EQUIPOS_<id>.xlsx (equipos del alcance/entrega más reciente + cambios de serial de los soportes)
+    e INFORME_<id>.txt (cambios frente a las actas anteriores)."""
     datos = dict(res.archivos)
+    textos: dict[str, str | None] = {}
+
+    def texto(f: dict) -> str | None:
+        archivo = f["NOMBRE_NORMALIZADO"]
+        if archivo not in textos:  # una sola lectura (y OCR) por acta
+            try:
+                textos[archivo] = texto_pdf(datos[archivo])
+            except Exception as e:  # noqa: BLE001
+                res.registrar(f"no se pudo leer el texto de {archivo}: {_err(e)}", logging.WARNING)
+                textos[archivo] = None
+        return textos[archivo]
+
+    filas = [f for f in res.filas if f["NOMBRE_NORMALIZADO"]]  # sin duplicados ni fallos de lectura
     actas = []
-    for f in res.filas:
-        if f["TIPO_ACTA"] not in ("ALCANCE", "ENTREGA") or not f["NOMBRE_NORMALIZADO"]:
+    for f in filas:
+        if f["TIPO_ACTA"] not in ("ALCANCE", "ENTREGA") or (t := texto(f)) is None:
             continue
-        try:
-            texto = texto_pdf(datos[f["NOMBRE_NORMALIZADO"]])
-        except Exception as e:  # noqa: BLE001
-            res.registrar(f"no se pudo leer la tabla de equipos de {f['NOMBRE_NORMALIZADO']}: {e}")
-            continue
-        lista = equipos_desde_texto(texto, reglas)
+        lista = equipos_desde_texto(t, reglas)
         if not lista:
             res.registrar(f"sin equipos con serial en {f['NOMBRE_NORMALIZADO']}")
             continue
-        fecha = None if f["FECHA_ACTA"] == "FECHA_PENDIENTE" else dt.datetime.strptime(f["FECHA_ACTA"], "%d-%m-%Y").date()
-        actas.append({"archivo": f["NOMBRE_NORMALIZADO"], "tipo": f["TIPO_ACTA"], "fecha": fecha, "equipos": lista})
-    if not actas:
+        actas.append({"archivo": f["NOMBRE_NORMALIZADO"], "tipo": f["TIPO_ACTA"], "fecha": _fecha_fila(f),
+                      "equipos": lista})
+
+    # Un acta en soporte idéntica a otra (p. ej. el alcance copiado de DESPUES) se marca DUPLICADO y no se
+    # copia; igual se leen sus observaciones, desde la fila del archivo que sí se copió.
+    original = {f["HASH_SHA256"]: f for f in filas}
+    soportes = list({o["NOMBRE_NORMALIZADO"]: {**o, "TIPO_SOPORTE": f["TIPO_SOPORTE"]} for f in res.filas
+                     if f["TIPO_SOPORTE"] in SOPORTES and (o := original.get(f["HASH_SHA256"]))}.values())
+    # De la más antigua a la más reciente (sin fecha al final): cada cambio parte del anterior.
+    soportes.sort(key=lambda f: (_fecha_fila(f) is None, _fecha_fila(f) or dt.date.min, f["NOMBRE_NORMALIZADO"]))
+    cambios_serial, observaciones = [], []
+    for f in soportes:
+        archivo, fecha = f["NOMBRE_NORMALIZADO"], _fecha_fila(f)
+        if (t := texto(f)) is None:
+            continue
+        obs = observaciones_desde_texto(t)
+        if obs is None:
+            res.registrar(f"sin sección OBSERVACIONES en {archivo} (¿PDF escaneado sin OCR?)", logging.WARNING)
+            continue
+        cambios = cambios_desde_observaciones(obs, reglas)
+        for c in cambios:
+            c.update(Fecha=fecha, Acta=archivo, Soporte=f["TIPO_SOPORTE"])
+            log.info("[%s] %s %s: %s %s -> %s", res.info["id"], _txt_fecha(fecha) or "sin fecha", archivo,
+                     c["Equipo"] or "?", c["Serial retirado"] or "?", c["Serial instalado"] or "?")
+        cambios_serial += cambios
+        observaciones.append({"Fecha": fecha, "Acta": archivo, "Soporte": f["TIPO_SOPORTE"], "Texto": obs,
+                              "Cambios": len(cambios)})
+        log.debug("[%s] observaciones de %s: %s", res.info["id"], archivo, obs)
+
+    if not actas and not observaciones:
         return []
-    actual, cambios = comparar(actas)
-    return [(f"EQUIPOS_{res.info['id']}.xlsx", excel_bytes(actual)),
-            (f"INFORME_{res.info['id']}.txt", informe_bytes(res.info["id"], actual, cambios))]
+    vigente = seguir_cambios(actas, cambios_serial)
+    for c in cambios_serial:
+        if c["Verificación"] != "OK":
+            res.registrar(f"cambio de serial a revisar en {c['Acta']}: {c['Verificación']}", logging.WARNING)
+    res.registrar(f"{len(cambios_serial)} cambios de serial en {len(observaciones)} actas de soporte")
+
+    actual, cambios = comparar(actas) if actas else (None, [])
+    salida = [(f"EQUIPOS_{res.info['id']}.xlsx", excel_bytes(actual, cambios_serial, observaciones, vigente))]
+    if actual:
+        salida.append((f"INFORME_{res.info['id']}.txt", informe_bytes(res.info["id"], actual, cambios)))
+    return salida
 
 
 def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
