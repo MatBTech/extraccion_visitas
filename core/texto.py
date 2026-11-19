@@ -7,7 +7,8 @@ import unicodedata
 
 SEPARADORES = re.compile(r"[\s_\-\\/#]+")
 PALABRAS_OMITIBLES = {"DE", "DEL", "LA", "EL"}
-PATRON_SEDE = re.compile(r"^(\d{4})-SEDE(\d+)-(.+)$", re.IGNORECASE)
+# Acepta variantes: "0155-SEDE155-SAN_RAFAEL-QUEBRADONA", "sede 155 - san rafael - quebradona", "0155_SEDE_155_...".
+PATRON_SEDE = re.compile(r"^(?:(\d+)[\s_\-.]*)?SEDE[\s_\-.#]*(\d+)[\s_\-.]+(.+)$")
 PATRON_FECHA_CARPETA = re.compile(r"(?<!\d)(\d{2})[_\-.](\d{2})[_\-.](\d{4})(?!\d)")
 
 
@@ -42,19 +43,29 @@ def es_acta(nombre_archivo: str, id_sede: str, tipos: list[str], palabra: str = 
 
 
 def parsear_sede(nombre_carpeta: str) -> dict | None:
-    """'0155-SEDE155-SAN_RAFAEL-QUEBRADONA' -> id 155, municipio SAN RAFAEL, nombre QUEBRADONA."""
-    m = PATRON_SEDE.match(nombre_carpeta.strip())
+    """'0155-SEDE155-SAN_RAFAEL-QUEBRADONA' -> id 155, municipio SAN RAFAEL, nombre QUEBRADONA.
+
+    Tolera minúsculas, tildes, espacios o _ en vez de guiones y la falta del prefijo 0155.
+    'estandar' es el nombre correcto de la carpeta: NNNN-SEDENNN-MUNICIPIO-NOMBRE.
+    """
+    base = unicodedata.normalize("NFKD", nombre_carpeta).encode("ascii", "ignore").decode("ascii")
+    m = PATRON_SEDE.match(base.strip().upper())
     if not m:
         return None
-    partes = m.group(3).split("-", 1)
-    municipio = partes[0].replace("_", " ").strip()
-    nombre = partes[1].replace("_", " ").strip() if len(partes) > 1 else ""
-    return {"id": str(int(m.group(2))), "id_carpeta": m.group(1), "municipio": municipio, "nombre": nombre}
+    # El guion separa municipio y nombre; sin guion no hay forma de saberlo y todo queda como municipio.
+    partes = [" ".join(p.replace("_", " ").split()) for p in m.group(3).split("-", 1)]
+    municipio = partes[0]
+    nombre = partes[1].replace("-", " ").strip() if len(partes) > 1 else ""
+    sede_id = int(m.group(2))
+    id_carpeta = m.group(1) or f"{sede_id:04d}"
+    estandar = f"{id_carpeta}-SEDE{sede_id}-{municipio}-{nombre}".replace(" ", "_").rstrip("-")
+    return {"id": str(sede_id), "id_carpeta": id_carpeta, "municipio": municipio, "nombre": nombre,
+            "estandar": estandar}
 
 
 def carpeta_sede(info: dict) -> str:
     """Nombre de la carpeta de salida por sede, por ejemplo 155_SAN_RAFAEL_QUEBRADONA."""
-    return f"{info['id']}_{info['municipio']}_{info['nombre']}".replace(" ", "_").strip("_")
+    return "_".join(f"{info['id']} {info['municipio']} {info['nombre']}".split())
 
 
 def fecha_desde_nombre(nombre: str) -> dt.date | None:

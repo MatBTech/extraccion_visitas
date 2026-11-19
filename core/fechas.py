@@ -99,7 +99,10 @@ def extraer_fecha_pdf(datos: bytes, usar_ocr: bool = True) -> dict | None:
         texto = "\n".join(p.get_text() for p in doc)
         origen = "PDF_TEXTO"
         if len(texto.strip()) < MINIMO_TEXTO and usar_ocr:
-            texto = _ocr(doc)
+            try:
+                texto = _ocr(doc)
+            except Exception as e:  # el PDF abrió; lo que falta es Tesseract/pytesseract
+                raise RuntimeError(f"PDF escaneado y el OCR falló ({type(e).__name__}: {e})") from e
             origen = "PDF_OCR"
     res = fecha_desde_texto(texto)
     if res:
