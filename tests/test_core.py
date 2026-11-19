@@ -87,10 +87,17 @@ class TestEquipos(unittest.TestCase):
                    "equipos": equipos_desde_texto(ALCANCE, REGLAS)}
         actual, cambios = comparar([alcance])
         self.assertEqual(cambios, [])
-        filas = list(load_workbook(io.BytesIO(excel_bytes(actual)))["Equipos"].iter_rows(values_only=True))
-        self.assertEqual(filas[0], ("Fuente", "Fecha", "Nombre", "Marca", "Serial"))
-        self.assertEqual(filas[1], ("ALCANCE", "06-02-2026", "Equipo última milla (Kit)", "Starlink", "KIT402343891FKJ"))
+        sede = parsear_sede("0155-SEDE155-SAN_RAFAEL-QUEBRADONA")
+        libro = load_workbook(io.BytesIO(excel_bytes(sede, actual)))
+        filas = list(libro["Equipos"].iter_rows(values_only=True))
+        self.assertEqual(filas[0], ("ID", "Carpeta", "Fuente", "Fecha", "Nombre", "Marca", "Serial", "Serial vigente"))
+        self.assertEqual(filas[1], ("155", "0155-SEDE155-SAN_RAFAEL-QUEBRADONA", "ALCANCE", "06-02-2026",
+                                    "Equipo última milla (Kit)", "Starlink", "KIT402343891FKJ", "KIT402343891FKJ"))
         self.assertEqual(len(filas), 8)
+        # Sin soportes, la hoja Final lista igual todos los equipos, sin cambios.
+        final = list(libro["Final"].iter_rows(min_row=2, values_only=True))
+        self.assertEqual(len(final), 7)
+        self.assertTrue(all(f[7] == "Sin cambios" and f[12] == "OK" for f in final))
         # Con una sola acta el informe se crea igual, indicando que no hay comparación.
         self.assertIn("no hay otra con qué comparar", informe_bytes("155", actual, cambios).decode("utf-8-sig"))
 
@@ -317,21 +324,33 @@ class TestObservaciones(unittest.TestCase):
         alcance = {"archivo": "A.pdf", "tipo": "ALCANCE", "fecha": dt.date(2026, 2, 6),
                    "equipos": equipos_desde_texto(ALCANCE, REGLAS)}
         cambios = []
-        for fecha, texto in [(dt.date(2026, 6, 1), VISITA_01_06), (dt.date(2026, 9, 2), VISITA_02_09),
-                             (dt.date(2026, 11, 4), VISITA_04_11)]:
+        obs_alcance = "OBSERVACIONES: Cambio de AP OUTDOOR sale W4ZC0LWHTZVQ entra WBBH01CZQ0BZ"  # texto real
+        for fecha, texto in [(dt.date(2026, 2, 6), obs_alcance), (dt.date(2026, 6, 1), VISITA_01_06),
+                             (dt.date(2026, 9, 2), VISITA_02_09), (dt.date(2026, 11, 4), VISITA_04_11)]:
             for c in cambios_desde_observaciones(observaciones_desde_texto(texto), REGLAS):
-                cambios.append({**c, "Fecha": fecha, "Acta": "V.pdf", "Soporte": "SOPORTE_TECNICO"})
-        vigente = seguir_cambios([alcance], cambios)
-        self.assertEqual([c["Verificación"] for c in cambios][:4], ["OK"] * 4)
+                cambios.append({**c, "Fecha": fecha, "Acta": f"V_{fecha:%m}.pdf", "Soporte": "SOPORTE_TECNICO"})
+        seguir_cambios([alcance], cambios)
+        self.assertEqual([c["Verificación"] for c in cambios][:5], ["OK"] * 5)
         # El Outdoor retirado el 04/11 nunca figuró instalado: falta un acta intermedia.
-        self.assertIn("no figura instalado antes", cambios[4]["Verificación"])
+        self.assertIn("no figura instalado antes", cambios[5]["Verificación"])
 
-        libro = load_workbook(io.BytesIO(excel_bytes(alcance, cambios, [], vigente)))
-        equipos = {f[2] + f[4]: f[5] for f in libro["Equipos"].iter_rows(min_row=2, values_only=True)}
+        libro = load_workbook(io.BytesIO(excel_bytes(parsear_sede("0155-SEDE155-SAN_RAFAEL-QUEBRADONA"),
+                                                     alcance, cambios, [])))
+        equipos = {f[4] + f[6]: f[7] for f in libro["Equipos"].iter_rows(min_row=2, values_only=True)}
         self.assertEqual(equipos["RouterHF509772NNG/337/R4"], "HKF0AXDRQ9H/R4")  # dos cambios seguidos
         self.assertEqual(equipos["AP OutdoorWBBH01CZQ0BZ"], "WBBH00TK3Q3G")
         self.assertEqual(equipos["AP IndoorW4ZC0LWHTZVQ"], "W4ZC0LWHTZVQ")  # sin cambios: el mismo
-        self.assertEqual(len(list(libro["Cambios de serial"].iter_rows())), 6)
+        self.assertEqual(len(list(libro["Cambios de serial"].iter_rows())), 7)
+
+        # Final: ID, Carpeta, Equipo, Marca, Acta base, Serial original, Serial actual, Estado, N°, ...
+        final = {(f[2], f[5]): f for f in libro["Final"].iter_rows(min_row=2, values_only=True)}
+        outdoor = final[("AP Outdoor", "W4ZC0LWHTZVQ")]  # la historia empieza antes del acta base
+        self.assertEqual((outdoor[6], outdoor[7]), ("WBBH00TK3Q3G", "Cambió 2 veces"))
+        self.assertEqual(final[("Router", "HF509772NNG/337/R4")][6:9], ("HKF0AXDRQ9H/R4", "Cambió 2 veces", 2))
+        self.assertEqual(final[("UPS interactiva 750VA", "E2404073229")][7], "Sin cambios")
+        suelto = final[("AP Outdoor", "WBBM0322FZ9H")]  # cambio sin equipo del acta que lo explique
+        self.assertEqual((suelto[4], suelto[6]), ("No está en el acta base", "WBCA05QRCH4L"))
+        self.assertTrue(suelto[12].startswith("REVISAR"))
 
 
 if __name__ == "__main__":

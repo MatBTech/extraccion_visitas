@@ -220,14 +220,14 @@ def _tablas_equipos(res: ResultadoSede, reglas: dict) -> list[tuple[str, bytes]]
 
     if not actas and not observaciones:
         return []
-    vigente = seguir_cambios(actas, cambios_serial)
+    seguir_cambios(actas, cambios_serial)
     for c in cambios_serial:
         if c["Verificación"] != "OK":
             res.registrar(f"cambio de serial a revisar en {c['Acta']}: {c['Verificación']}", logging.WARNING)
     res.registrar(f"{len(cambios_serial)} cambios de serial en {len(observaciones)} actas de soporte")
 
     actual, cambios = comparar(actas) if actas else (None, [])
-    salida = [(f"EQUIPOS_{res.info['id']}.xlsx", excel_bytes(actual, cambios_serial, observaciones, vigente))]
+    salida = [(f"EQUIPOS_{res.info['id']}.xlsx", excel_bytes(res.info, actual, cambios_serial, observaciones))]
     if actual:
         salida.append((f"INFORME_{res.info['id']}.txt", informe_bytes(res.info["id"], actual, cambios)))
     return salida

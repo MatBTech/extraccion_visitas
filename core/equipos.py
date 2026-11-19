@@ -178,12 +178,9 @@ def cambios_desde_observaciones(obs: str, reglas: dict) -> list[dict]:
     return cambios + pendientes
 
 
-def seguir_cambios(actas: list[dict], cambios: list[dict]) -> dict[tuple[str, str], str]:
+def seguir_cambios(actas: list[dict], cambios: list[dict]) -> None:
     """Recorre los cambios (ya en orden de fecha) y marca en 'Verificación' si el serial retirado era uno
-    instalado antes (en un alcance/entrega anterior o en un cambio previo).
-    Devuelve {(llave del serial original, equipo): serial vigente} para actualizar la tabla de equipos;
-    la cadena X -> Y -> Z solo sigue cambios del mismo equipo.
-    """
+    instalado antes (en un alcance/entrega anterior o en un cambio previo)."""
     conocidos = {}  # llave -> fecha en que se vio instalado por primera vez
     for a in actas:
         for e in a["equipos"]:
@@ -204,20 +201,73 @@ def seguir_cambios(actas: list[dict], cambios: list[dict]) -> dict[tuple[str, st
         c["Verificación"] = "OK" if not notas else "REVISAR: " + "; ".join(notas)
         if ins:
             conocidos.setdefault(_llave_serial(ins), c["Fecha"] or dt.date.min)
-            if ret:
-                reemplazo[(_llave_serial(ret), c["Equipo"])] = ins
 
-    vigente = {}
-    for (k, equipo), serial in reemplazo.items():
-        vistos = {k}
-        while (s := _llave_serial(serial)) in {x for x, eq in reemplazo if eq == equipo} - vistos:  # X -> Y -> Z
-            vistos.add(s)
-            serial = reemplazo[(s, equipo)]
-        vigente[(k, equipo)] = serial
-    return vigente
+
+def consolidado(actual: dict | None, cambios: list[dict]) -> list[dict]:
+    """Una fila por equipo con su historia completa de seriales (cambios ya en orden de fecha).
+
+    Parte de cada equipo del acta base (alcance/entrega más reciente), busca hacia atrás los cambios que
+    lo instalaron y hacia adelante los que lo reemplazaron (X -> Y -> Z, solo del mismo equipo).
+    Los cambios que no encajan con ningún equipo del acta base salen en filas propias.
+    """
+    usados: set[int] = set()
+
+    def mismo(c, campo, serial, equipo):
+        return bool(c[campo]) and _llave_serial(c[campo]) == _llave_serial(serial) and c["Equipo"] in ("", equipo)
+
+    def adelante(serial, equipo, hist):
+        for i, c in enumerate(cambios):
+            if i not in usados and serial and mismo(c, "Serial retirado", serial, equipo):
+                usados.add(i)
+                hist.append(c)
+                serial = c["Serial instalado"]
+        return serial
+
+    def fila(equipo, marca, base, hist, final):
+        return {"Equipo": equipo, "Marca": marca, "Base": base, "Historial": hist, "Actual": final,
+                "Original": hist[0]["Serial retirado"] if hist else final}
+
+    filas = []
+    for e in actual["equipos"] if actual else []:
+        atras, serial = [], e["Serial"]
+        while (i := next((i for i in reversed(range(len(cambios)))  # ¿qué cambio instaló este serial?
+                          if i not in usados and mismo(cambios[i], "Serial instalado", serial, e["Nombre"])),
+                         None)) is not None:
+            usados.add(i)
+            atras.insert(0, cambios[i])
+            serial = cambios[i]["Serial retirado"]
+        hist = atras
+        final = adelante(e["Serial"], e["Nombre"], hist)
+        filas.append(fila(e["Nombre"], e["Marca"], f"{actual['tipo']} {_txt(actual['fecha'])}", hist, final))
+    for i, c in enumerate(cambios):
+        if i not in usados:
+            usados.add(i)
+            hist = [c]
+            final = adelante(c["Serial instalado"], c["Equipo"], hist)
+            filas.append(fila(c["Equipo"], "", "No está en el acta base", hist, final))
+    return filas
 
 
 COLUMNAS_CAMBIOS = ["Fecha", "Acta", "Soporte", "Equipo", "Serial retirado", "Serial instalado", "Verificación"]
+COLUMNAS_FINAL = ["Equipo", "Marca", "Acta base", "Serial original", "Serial actual", "Estado", "N° cambios",
+                  "Último cambio", "Acta del último cambio", "Historial de seriales", "Verificación"]
+
+
+def _filas_final(filas: list[dict]) -> list[list]:
+    salida = []
+    for f in filas:
+        h = f["Historial"]
+        n = len(h)
+        estado = "Sin cambios" if not n else f"Cambió {n} {'vez' if n == 1 else 'veces'}"
+        if h and not f["Actual"]:
+            estado += " (retirado sin reemplazo)"
+        historial = " | ".join(f"{_txt(c['Fecha'])}: {c['Serial retirado'] or '?'} → {c['Serial instalado'] or '?'}"
+                               f" ({c['Acta']})" for c in h)
+        revisar = [c["Verificación"] for c in h if c["Verificación"] != "OK"]
+        salida.append([f["Equipo"], f["Marca"], f["Base"], f["Original"], f["Actual"], estado, n,
+                       _txt(h[-1]["Fecha"]) if h else "", h[-1]["Acta"] if h else "", historial,
+                       "; ".join(revisar) if revisar else "OK"])
+    return salida
 
 
 def _hoja(libro, titulo: str, columnas: list[str], filas: list[list], primera: bool = False):
@@ -239,28 +289,28 @@ def _hoja(libro, titulo: str, columnas: list[str], filas: list[list], primera: b
     hoja.freeze_panes = "A2"
 
 
-def excel_bytes(actual: dict | None, cambios: list[dict] = (), observaciones: list[dict] = (),
-                vigente: dict[tuple[str, str], str] | None = None) -> bytes:
-    """Hoja 'Equipos' (acta de alcance/entrega más reciente, con el serial vigente tras los soportes),
+def excel_bytes(sede: dict, actual: dict | None, cambios: list[dict] = (), observaciones: list[dict] = ()) -> bytes:
+    """Hojas, todas con ID y Carpeta de la sede al inicio:
+    'Final' (cada equipo con su serial original, actual e historial completo; también los que no cambian),
+    'Equipos' (acta de alcance/entrega más reciente, con el serial vigente tras los soportes),
     'Cambios de serial' (en orden de fecha) y 'Observaciones' (texto de cada acta de soporte)."""
     from openpyxl import Workbook
 
+    pre = [sede["id"], sede.get("carpeta", sede.get("estandar", ""))]
+    cols = ["ID", "Carpeta"]
+    final = consolidado(actual, list(cambios))
     libro = Workbook()
-    columnas = COLUMNAS_TABLA + (["Serial vigente"] if vigente is not None else [])
-    filas = []
-    for e in actual["equipos"] if actual else []:
-        fila = [actual["tipo"], _txt(actual["fecha"]), e["Nombre"], e["Marca"], e["Serial"]]
-        if vigente is not None:
-            k = _llave_serial(e["Serial"])
-            fila.append(vigente.get((k, e["Nombre"])) or vigente.get((k, "")) or e["Serial"])
-        filas.append(fila)
-    _hoja(libro, "Equipos", columnas, filas, primera=True)
+    _hoja(libro, "Final", cols + COLUMNAS_FINAL, [pre + f for f in _filas_final(final)], primera=True)
+    equipos = actual["equipos"] if actual else []
+    _hoja(libro, "Equipos", cols + COLUMNAS_TABLA + ["Serial vigente"],
+          [pre + [actual["tipo"], _txt(actual["fecha"]), e["Nombre"], e["Marca"], e["Serial"], f["Actual"]]
+           for e, f in zip(equipos, final)])  # las primeras filas de 'final' son los equipos del acta, en orden
     if cambios or observaciones:
-        _hoja(libro, "Cambios de serial", COLUMNAS_CAMBIOS,
-              [[_txt(c["Fecha"]), c["Acta"], c["Soporte"], c["Equipo"], c["Serial retirado"],
-                c["Serial instalado"], c["Verificación"]] for c in cambios])
-        _hoja(libro, "Observaciones", ["Fecha", "Acta", "Soporte", "Cambios detectados", "Observaciones"],
-              [[_txt(o["Fecha"]), o["Acta"], o["Soporte"], o["Cambios"], o["Texto"]] for o in observaciones])
+        _hoja(libro, "Cambios de serial", cols + COLUMNAS_CAMBIOS,
+              [pre + [_txt(c["Fecha"]), c["Acta"], c["Soporte"], c["Equipo"], c["Serial retirado"],
+                      c["Serial instalado"], c["Verificación"]] for c in cambios])
+        _hoja(libro, "Observaciones", cols + ["Fecha", "Acta", "Soporte", "Cambios detectados", "Observaciones"],
+              [pre + [_txt(o["Fecha"]), o["Acta"], o["Soporte"], o["Cambios"], o["Texto"]] for o in observaciones])
     buf = io.BytesIO()
     libro.save(buf)
     return buf.getvalue()

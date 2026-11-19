@@ -60,7 +60,7 @@ def parsear_sede(nombre_carpeta: str) -> dict | None:
     id_carpeta = m.group(1) or f"{sede_id:04d}"
     estandar = f"{id_carpeta}-SEDE{sede_id}-{municipio}-{nombre}".replace(" ", "_").rstrip("-")
     return {"id": str(sede_id), "id_carpeta": id_carpeta, "municipio": municipio, "nombre": nombre,
-            "estandar": estandar}
+            "estandar": estandar, "carpeta": nombre_carpeta.strip()}
 
 
 def carpeta_sede(info: dict) -> str:

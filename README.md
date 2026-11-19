@@ -83,8 +83,13 @@ Las actas de `SOPORTE TECNICO` y `SOPORTE DE MEJORA` se leen **de la más antigu
 según la palabra que va justo antes, el serial **sale** (`sale`, `retirado`, `daño`, `quemado`, `reemplazo del`…)
 o **entra** (`entra`, `instalado`, `por el`, `nuevo`…). Cada serial que sale se empareja con el siguiente que entra.
 
-En `EQUIPOS_<ID>.xlsx` esto agrega:
+En `EQUIPOS_<ID>.xlsx` todas las hojas empiezan con **ID** (de la carpeta: `0155-SEDE155-…` → `155`) y
+**Carpeta** (nombre completo de la carpeta de la sede), y se agrega:
 
+- Hoja **Final** (la primera): una fila por equipo, cambie o no. Acta base, serial original (el primero de
+  toda su historia), serial actual en la sede, estado (`Sin cambios` / `Cambió N veces`), número de cambios,
+  fecha y acta del último cambio, historial completo (`fecha: X → Y (acta) | …`) y verificación.
+  Un cambio que no encaja con ningún equipo del acta base sale en su propia fila como `No está en el acta base`.
 - Columna **Serial vigente** en la hoja `Equipos`: el serial tras aplicar todos los cambios del mismo equipo (X → Y → Z).
 - Hoja **Cambios de serial**: Fecha / Acta / Soporte / Equipo / Serial retirado / Serial instalado / Verificación.
   `Verificación` es `OK` si el serial retirado figuraba instalado antes (en un alcance/entrega o en un cambio
