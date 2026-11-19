@@ -4,13 +4,23 @@ Lee las carpetas de las sedes en el PC, encuentra las actas (alcance, entrega, v
 
 ## Requisitos
 
-- Windows (el lanzador es `file.bat`; el script en Python funciona en cualquier sistema).
-- Python 3.10 o superior.
-- Tesseract OCR con idioma español, solo para actas escaneadas. Sin él, las actas escaneadas quedan fuera y el log lo avisa.
+- Windows 10 o 11 con conexión a internet la primera vez.
+- Nada más: `file.bat` instala lo que falte.
 
 ## Instalación
 
-Desde la carpeta del proyecto, en PowerShell:
+**Automática (recomendada):** copia la carpeta del proyecto y haz doble clic en `file.bat`. En la primera ejecución:
+
+1. Si no hay Python 3.10 o superior, instala Python 3.13 para el usuario con `winget` (no pide permisos de administrador).
+2. Crea el entorno `.venv` e instala las librerías de `requirements.txt`.
+3. Si no hay Tesseract, lo instala con `winget`. Puede pedir permiso de administrador; si se rechaza, el programa funciona igual, pero sin leer actas escaneadas.
+4. Descarga los idiomas del OCR (`spa`, `osd`) en la carpeta `tessdata/` del proyecto.
+
+Las siguientes ejecuciones van directo a la extracción. Si la instalación se corta, vuelve a abrir `file.bat` y retoma donde quedó. Para reinstalar las librerías desde cero, borra la carpeta `.venv`.
+
+Si el equipo no tiene `winget` (Windows antiguo), instala **App Installer** desde la Microsoft Store, o Python desde python.org, y vuelve a ejecutar.
+
+**Manual**, desde la carpeta del proyecto, en PowerShell:
 
 ```powershell
 python -m venv .venv
@@ -32,7 +42,7 @@ El programa busca `tesseract.exe` en `C:\Program Files\Tesseract-OCR\` y en `%LO
 
 ## Ejecución
 
-**Opción 1 (doble clic):** abre `file.bat`. Comprueba que existan `.venv` y el script, ejecuta la extracción y al final muestra `[SUCCESS]` o `[ERROR]` con el código de salida. La ventana queda abierta hasta que pulses una tecla.
+**Opción 1 (doble clic):** abre `file.bat`. Instala lo que falte (ver arriba), ejecuta la extracción y al final muestra `[SUCCESS]` o `[ERROR]` con el código de salida. La ventana queda abierta hasta que pulses una tecla.
 
 **Opción 2 (consola):**
 
@@ -75,7 +85,7 @@ Cada ejecución crea `logs/extraccion_<AAAAMMDD_HHMMSS>.log`:
 
 ### Problemas frecuentes
 
-- **`[ERROR] No se encontro el entorno virtual`**: falta `.venv`. Sigue los pasos de [Instalación](#instalación).
+- **Falla la instalación de librerías**: revisa la conexión a internet y vuelve a abrir `file.bat`.
 - **Las actas escaneadas no aparecen**: falta Tesseract o el idioma `spa`. Lo confirma el log.
 - **`No encontré carpetas con formato NNNN-SEDENNN-…`**: la ruta no es una sede ni contiene sedes. Revisa los nombres de las carpetas.
 - **Error al escribir una sede**: cierra el Excel o el PDF abiertos de esa sede, o espera a que OneDrive termine de sincronizar, y vuelve a ejecutar.

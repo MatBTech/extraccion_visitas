@@ -3,3 +3,5 @@ __pycache__/
 EXTRACCION_ACTAS/
 .env
 logs/
+.venv/
+tessdata/
