@@ -4,7 +4,7 @@
 Uso:
     python local/extraer_local.py
 Pide una ruta (ubicación con varias sedes, o una sede), procesa todas las sedes
-y deja en cada sede una carpeta EXTRACCION_ACTAS con su ZIP, REPORTE_GENERAL.csv y LOG_EJECUCION.log.
+y deja en cada sede una carpeta EXTRACCION_ACTAS con las actas renombradas, sin comprimir.
 """
 from __future__ import annotations
 
@@ -46,7 +46,8 @@ def main() -> None:
     print("\nProcesando...")
     resultados = procesar(fuente, sedes, reglas)
     for (_, ruta_sede), r in zip(sedes, resultados):
-        escribir_local([r], ruta_sede / "EXTRACCION_ACTAS")
+        if not r.error:
+            escribir_local(r, ruta_sede / "EXTRACCION_ACTAS")
 
     print("\nResumen:")
     for r in resultados:

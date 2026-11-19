@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .fechas import extraer_fecha_pdf
-from .texto import carpeta_sede, clave_carpeta, es_acta, fecha_desde_cadena
+from .texto import carpeta_sede, clave_carpeta, es_acta, fecha_desde_cadena, fecha_desde_nombre
 
 log = logging.getLogger("actas")
 
@@ -72,7 +72,7 @@ def _txt_fecha(f) -> str:
     return f.strftime("%d-%m-%Y") if f else ""
 
 
-def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, carpeta, hashes, usados, res) -> dict:
+def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados, res) -> dict:
     fila = {c: "" for c in COLUMNAS}
     fila.update(ID_SEDE=info["id"], NOMBRE_SEDE=info["nombre"], MUNICIPIO=info["municipio"],
                 TIPO_SOPORTE=ub["salida"], TIPO_ACTA=tipo, NOMBRE_ORIGINAL=nombre,
@@ -89,30 +89,24 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, carpeta, hashes
     obs: list[str] = []
     estado = "OK"
 
-    pdf = None
-    try:
-        pdf = extraer_fecha_pdf(data)
-        if pdf is None:
-            obs.append("PDF sin fecha identificable")
-    except Exception as e:  # noqa: BLE001
-        estado = "PDF_NO_ABRE"
-        obs.append(f"no se pudo leer el PDF: {e}")
-
-    fecha_carp = fecha_desde_cadena(cadena)
+    # Orden: carpeta -> nombre del archivo -> contenido del PDF (texto, OCR, metadatos).
+    fecha_carp = fecha_desde_cadena(cadena) or fecha_desde_nombre(nombre)
     fecha, fuente_f, conf, frag, conflicto = None, "", "", "", "NO"
 
-    if pdf:
-        fecha, fuente_f, conf, frag = pdf["fecha"], pdf["fuente"], pdf["confianza"], pdf["fragmento"]
-        if conf == "BAJA":
-            estado = "REVISAR"
-            obs.append("fecha de baja confianza en el PDF")
-        if fecha_carp and fecha_carp != fecha:
-            conflicto = "SI"
-            estado = "REVISAR"
-            obs.append(f"la carpeta indica {_txt_fecha(fecha_carp)}")
-    elif fecha_carp:
-        fecha, fuente_f, conf = fecha_carp, "CARPETA", "MEDIA"
-        obs.append("fecha tomada del nombre de la carpeta")
+    if fecha_carp:
+        fecha, fuente_f, conf = fecha_carp, "CARPETA", "ALTA"
+    else:
+        try:
+            pdf = extraer_fecha_pdf(data)
+        except Exception as e:  # noqa: BLE001
+            pdf = None
+            estado = "PDF_NO_ABRE"
+            obs.append(f"no se pudo leer el PDF: {e}")
+        if pdf:
+            fecha, fuente_f, conf, frag = pdf["fecha"], pdf["fuente"], pdf["confianza"], pdf["fragmento"]
+            if conf == "BAJA":
+                estado = "REVISAR"
+                obs.append(f"fecha de baja confianza ({fuente_f})")
 
     if fecha is None:
         estado = "REVISAR"
@@ -124,8 +118,8 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, carpeta, hashes
         nombre_salida = ""
     else:
         nombre_salida = _nombre_salida(tipo, info["id"], fecha, usados)
-        hashes[sha] = f"{ub['salida']}/{nombre_salida}"
-        res.archivos.append((f"{carpeta}/{ub['salida']}/{nombre_salida}", data))
+        hashes[sha] = nombre_salida
+        res.archivos.append((nombre_salida, data))
 
     fila.update(NOMBRE_NORMALIZADO=nombre_salida, FECHA_ACTA=_txt_fecha(fecha) or "FECHA_PENDIENTE",
                 FRAGMENTO_FECHA=frag, CONFIANZA_FECHA=conf, FUENTE_FECHA=fuente_f,
@@ -137,8 +131,8 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, carpeta, hashes
 
 def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
     res = ResultadoSede(info=info)
-    carpeta = carpeta_sede(info)
     hashes: dict[str, str] = {}
+    usados: set[str] = set()  # por sede: todas las actas van juntas en la misma carpeta
 
     for ub in reglas["ubicaciones"]:
         ref_ub = ref
@@ -150,15 +144,13 @@ def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
             res.registrar(f"ubicación no encontrada: {ub['salida']}")
             continue
 
-        usados: set[str] = set()
         for nombre, aref, cadena in _recorrer(fuente, ref_ub, ub["recursivo"]):
             tipo = es_acta(nombre, info["id"], ub["tipos"], reglas["palabra_acta"])
             if tipo is None:
                 continue
             res.filas.append(_procesar_acta(fuente, aref, nombre, tipo, ub, info,
-                                            cadena, carpeta, hashes, usados, res))
+                                            cadena, hashes, usados, res))
 
-    res.archivos.append((f"{carpeta}/INVENTARIO_SEDE.csv", csv_bytes(res.filas)))
     return res
 
 
@@ -211,12 +203,9 @@ def zip_global(resultados: list[ResultadoSede]) -> bytes:
     return buf.getvalue()
 
 
-def escribir_local(resultados: list[ResultadoSede], salida: Path) -> None:
-    """Escribe en disco un ZIP por sede, el reporte general y el log (para la versión local)."""
+def escribir_local(res: ResultadoSede, salida: Path) -> None:
+    """Copia las actas de una sede, sin comprimir, en la carpeta de salida (versión local)."""
     salida = Path(salida)
     salida.mkdir(parents=True, exist_ok=True)
-    for r in resultados:
-        if not r.error:
-            (salida / f"{carpeta_sede(r.info)}.zip").write_bytes(zip_sede(r))
-    (salida / "REPORTE_GENERAL.csv").write_bytes(reporte_general(resultados))
-    (salida / "LOG_EJECUCION.log").write_bytes(log_texto(resultados))
+    for nombre, datos in res.archivos:
+        (salida / nombre).write_bytes(datos)

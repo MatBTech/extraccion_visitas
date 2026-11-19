@@ -2,7 +2,7 @@
 
 Dos formas de uso que comparten el mismo núcleo (`core/`):
 
-- **Local** (`local/extraer_local.py`): lee carpetas del PC y genera un ZIP por sede.
+- **Local** (`local/extraer_local.py`): lee carpetas del PC y deja las actas renombradas en `EXTRACCION_ACTAS` dentro de cada sede.
 - **Web** (`web/app.py`): inicia sesión con Microsoft, recibe un enlace de SharePoint de solo vista y devuelve un ZIP.
 
 ## Instalación
@@ -19,11 +19,7 @@ Para el OCR (PDF escaneados) instala **Tesseract** en el equipo con el paquete d
 python local/extraer_local.py
 ```
 
-Pide la ruta, procesa todas las sedes encontradas (o la sede, si la ruta ya es una) y escribe dentro de cada sede una carpeta `EXTRACCION_ACTAS` con:
-
-- `NNN_MUNICIPIO_NOMBRE.zip` por sede (con `INVENTARIO_SEDE.csv` dentro).
-- `REPORTE_GENERAL.csv` (separado por `;`, UTF-8 con BOM para Excel).
-- `LOG_EJECUCION.log`.
+Pide la ruta, procesa todas las sedes encontradas (o la sede, si la ruta ya es una) y escribe dentro de cada sede una carpeta `EXTRACCION_ACTAS` con todas sus actas juntas y sin comprimir, renombradas como `TIPO_ID_DD-MM-YYYY.pdf` (por ejemplo `VISITA_155_01-06-2026.pdf`). Si dos actas coinciden en nombre se añade `_2`, `_3`…
 
 ## Web
 
@@ -57,10 +53,10 @@ Están en `reglas.json`, sin tocar el código:
 
 ## Fechas
 
-1. Texto del PDF (fecha de visita, del acta, de entrega, o "en la ciudad de…, a los… días del mes de…").
-2. Si el PDF no tiene texto, OCR en español.
-3. Si no hay fecha en el PDF, la fecha de la carpeta (formato DD-MM-YYYY).
-4. Si la carpeta y el PDF no coinciden, se usa el PDF y se marca `CONFLICTO_FECHA = SI`.
+1. Fecha en el nombre de la carpeta (DD-MM-YYYY) o, si no hay, en el nombre del archivo.
+2. Texto del PDF (fecha de visita, del acta, de entrega, "en la ciudad de…", 01/06/2026, 2026-06-01, "marzo 15 de 2026").
+3. Si el texto no tiene fecha, OCR en español.
+4. Último recurso: fecha de creación guardada en el PDF (`PDF_METADATOS`, confianza BAJA, queda en `REVISAR`).
 5. Si no hay ninguna, el archivo se conserva como `FECHA_PENDIENTE` y queda en `REVISAR`.
 
 ## Pruebas

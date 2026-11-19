@@ -1,19 +1,17 @@
 """Pruebas del núcleo. Se ejecutan sin SharePoint y sin PyMuPDF (los PDF de prueba son falsos
 a propósito, así se prueba el respaldo por nombre de carpeta)."""
 import datetime as dt
-import io
 import sys
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
 
-from core.fechas import fecha_desde_texto  # noqa: E402
+from core.fechas import extraer_fecha_pdf, fecha_desde_texto  # noqa: E402
 from core.fuentes import FuenteLocal  # noqa: E402
-from core.proceso import cargar_reglas, procesar, zip_sede  # noqa: E402
+from core.proceso import cargar_reglas, escribir_local, procesar  # noqa: E402
 from core.texto import carpeta_sede, es_acta, fecha_desde_nombre, parsear_sede  # noqa: E402
 
 REGLAS = cargar_reglas(RAIZ / "reglas.json")
@@ -63,6 +61,19 @@ class TestSedesYFechas(unittest.TestCase):
         self.assertEqual(r["fecha"], dt.date(2025, 6, 24))
         self.assertEqual(r["confianza"], "ALTA")
 
+    def test_formatos_iso_y_mes_primero(self):
+        self.assertEqual(fecha_desde_texto("Fecha de visita: 2026-06-01")["fecha"], dt.date(2026, 6, 1))
+        self.assertEqual(fecha_desde_texto("Medellín, marzo 15 de 2024")["fecha"], dt.date(2024, 3, 15))
+
+    def test_pdf_sin_fecha_en_texto_usa_metadatos(self):
+        import fitz
+
+        doc = fitz.open()
+        doc.new_page().insert_text((72, 72), "Acta de visita sin fecha escrita en el cuerpo del documento.")
+        doc.set_metadata({"creationDate": "D:20250310120000"})
+        r = extraer_fecha_pdf(doc.tobytes(), usar_ocr=False)
+        self.assertEqual((r["fecha"], r["fuente"], r["confianza"]), (dt.date(2025, 3, 10), "PDF_METADATOS", "BAJA"))
+
     def test_sin_fecha(self):
         self.assertIsNone(fecha_desde_texto("texto sin fechas"))
 
@@ -107,14 +118,15 @@ class TestProcesoLocal(unittest.TestCase):
         # Mismo contenido que otra acta: se marca como duplicado y no se copia
         self.assertEqual(por_original["ACTA_ENTREGA_ID155.pdf"]["ESTADO"], "DUPLICADO")
 
-    def test_zip_por_sede_con_estructura(self):
+    def test_actas_juntas_sin_comprimir(self):
         info = parsear_sede(self.sede.name)
         (res,) = procesar(FuenteLocal(self.tmp), [(info, self.sede)], REGLAS)
-        with zipfile.ZipFile(io.BytesIO(zip_sede(res))) as z:
-            nombres = z.namelist()
-        self.assertIn("155_SAN_RAFAEL_QUEBRADONA/SOPORTE_TECNICO/VISITA_155_01-06-2026.pdf", nombres)
-        self.assertIn("155_SAN_RAFAEL_QUEBRADONA/DESPUES_DOCUMENTOS/ALCANCE_155_FECHA_PENDIENTE.pdf", nombres)
-        self.assertIn("155_SAN_RAFAEL_QUEBRADONA/INVENTARIO_SEDE.csv", nombres)
+        salida = self.sede / "EXTRACCION_ACTAS"
+        escribir_local(res, salida)
+        nombres = {f.name for f in salida.iterdir()}
+        self.assertIn("VISITA_155_01-06-2026.pdf", nombres)
+        self.assertIn("ALCANCE_155_FECHA_PENDIENTE.pdf", nombres)
+        self.assertTrue(all(f.is_file() and f.suffix == ".pdf" for f in salida.iterdir()))
 
 
 if __name__ == "__main__":
