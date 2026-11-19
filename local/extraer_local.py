@@ -105,25 +105,29 @@ def main() -> None:
 
     log.info("Reglas cargadas: %d ubicaciones", len(reglas["ubicaciones"]))
     log.info("Procesando...")
-    try:
-        resultados = procesar(fuente, sedes, reglas)
-    except KeyboardInterrupt:
-        log.warning("Cancelado por el usuario; no se escribió nada.")
-        sys.exit(130)
-
     # Una carpeta nueva por extracción: las anteriores quedan como historial y nada se sobrescribe.
     carpeta = f"EXTRACCION_ACTAS_{dt.datetime.now():%d-%m-%Y_%H-%M-%S}"
     errores_escritura = {}
-    for (_, ruta_sede), r in zip(sedes, resultados):
+    resultados = []
+    # Cada sede se escribe al terminarla: con cientos de sedes, un corte no pierde lo ya hecho.
+    for n, (info, ruta_sede) in enumerate(sedes, 1):
+        try:
+            [r] = procesar(fuente, [(info, ruta_sede)], reglas)
+        except KeyboardInterrupt:
+            log.warning("Cancelado por el usuario en la sede %d de %d; las anteriores ya quedaron escritas.",
+                        n, len(sedes))
+            sys.exit(130)
+        resultados.append(r)
         if r.error:
             continue
         # Una sede bloqueada (archivo abierto, OneDrive, permisos) no impide escribir las demás.
         try:
             escribir_local(r, ruta_sede / carpeta)
-            log.debug("Escritos %d archivos en %s", len(r.archivos), ruta_sede / carpeta)
+            log.info("[%d/%d] Sede %s escrita en %s", n, len(sedes), r.info["id"], ruta_sede / carpeta)
         except OSError as e:
             log.exception("No se pudo escribir la sede %s", r.info["id"])
             errores_escritura[r.info["id"]] = f"no se pudo escribir en {ruta_sede}: {e}"
+        r.archivos = []  # libera los PDF de memoria; el resumen solo usa filas y log
 
     print("\nResumen:")
     for r in resultados:

@@ -81,7 +81,7 @@ Cada ejecución crea `logs/extraccion_<AAAAMMDD_HHMMSS>.log`:
 |---|---|
 | 0 | Todo correcto |
 | 1 | Ruta inválida, sin sedes válidas, error en `reglas.json`, o alguna sede con error |
-| 130 | Cancelado con Ctrl+C durante el proceso (no se escribe nada) |
+| 130 | Cancelado con Ctrl+C durante el proceso (las sedes ya terminadas quedan escritas) |
 
 ### Problemas frecuentes
 
