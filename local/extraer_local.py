@@ -61,10 +61,23 @@ def main() -> None:
         sys.exit(1)
 
     print("\nProcesando...")
-    resultados = procesar(fuente, sedes, reglas)
+    try:
+        resultados = procesar(fuente, sedes, reglas)
+    except KeyboardInterrupt:
+        print("\nCancelado; no se escribió nada.")
+        sys.exit(130)
+
+    # Una carpeta nueva por extracción: las anteriores quedan como historial y nada se sobrescribe.
+    carpeta = f"EXTRACCION_ACTAS_{dt.datetime.now():%d-%m-%Y_%H-%M-%S}"
+    errores_escritura = {}
     for (_, ruta_sede), r in zip(sedes, resultados):
-        if not r.error:
-            escribir_local(r, ruta_sede / "EXTRACCION_ACTAS")
+        if r.error:
+            continue
+        # Una sede bloqueada (archivo abierto, OneDrive, permisos) no impide escribir las demás.
+        try:
+            escribir_local(r, ruta_sede / carpeta)
+        except OSError as e:
+            errores_escritura[r.info["id"]] = f"no se pudo escribir en {ruta_sede}: {e}"
 
     print("\nResumen:")
     for r in resultados:
@@ -74,7 +87,9 @@ def main() -> None:
             print(f"  ID {r.info['id']}: ERROR - {errores_escritura[r.info['id']]}")
         else:
             print(f"  ID {r.info['id']}: {len(r.filas)} actas encontradas")
-    print("\nResultados en la carpeta EXTRACCION_ACTAS de cada sede.")
+    print(f"\nResultados en la carpeta {carpeta} de cada sede.")
+    if errores_escritura or any(r.error for r in resultados):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
