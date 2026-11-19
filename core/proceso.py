@@ -5,6 +5,7 @@ No sabe si los datos vienen de disco o de SharePoint; eso lo decide la fuente.
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import hashlib
 import io
 import json
@@ -13,7 +14,8 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .fechas import extraer_fecha_pdf
+from .equipos import comparar, equipos_desde_texto, excel_bytes, informe_bytes
+from .fechas import extraer_fecha_pdf, texto_pdf
 from .texto import carpeta_sede, clave_carpeta, es_acta, fecha_desde_cadena, fecha_desde_nombre
 
 log = logging.getLogger("actas")
@@ -129,6 +131,31 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
     return fila
 
 
+def _tablas_equipos(res: ResultadoSede, reglas: dict) -> list[tuple[str, bytes]]:
+    """EQUIPOS_<id>.xlsx (acta de alcance/entrega más reciente) e INFORME_<id>.txt (cambios frente a las anteriores)."""
+    datos = dict(res.archivos)
+    actas = []
+    for f in res.filas:
+        if f["TIPO_ACTA"] not in ("ALCANCE", "ENTREGA") or not f["NOMBRE_NORMALIZADO"]:
+            continue
+        try:
+            texto = texto_pdf(datos[f["NOMBRE_NORMALIZADO"]])
+        except Exception as e:  # noqa: BLE001
+            res.registrar(f"no se pudo leer la tabla de equipos de {f['NOMBRE_NORMALIZADO']}: {e}")
+            continue
+        lista = equipos_desde_texto(texto, reglas)
+        if not lista:
+            res.registrar(f"sin equipos con serial en {f['NOMBRE_NORMALIZADO']}")
+            continue
+        fecha = None if f["FECHA_ACTA"] == "FECHA_PENDIENTE" else dt.datetime.strptime(f["FECHA_ACTA"], "%d-%m-%Y").date()
+        actas.append({"archivo": f["NOMBRE_NORMALIZADO"], "tipo": f["TIPO_ACTA"], "fecha": fecha, "equipos": lista})
+    if not actas:
+        return []
+    actual, cambios = comparar(actas)
+    return [(f"EQUIPOS_{res.info['id']}.xlsx", excel_bytes(actual)),
+            (f"INFORME_{res.info['id']}.txt", informe_bytes(res.info["id"], actual, cambios))]
+
+
 def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
     res = ResultadoSede(info=info)
     hashes: dict[str, str] = {}
@@ -150,6 +177,9 @@ def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
                 continue
             res.filas.append(_procesar_acta(fuente, aref, nombre, tipo, ub, info,
                                             cadena, hashes, usados, res))
+
+    if reglas.get("equipos"):
+        res.archivos += _tablas_equipos(res, reglas)
 
     return res
 

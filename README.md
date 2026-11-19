@@ -2,7 +2,7 @@
 
 Dos formas de uso que comparten el mismo núcleo (`core/`):
 
-- **Local** (`local/extraer_local.py`): lee carpetas del PC y genera un ZIP por sede.
+- **Local** (`local/extraer_local.py`): lee carpetas del PC y deja las actas renombradas, el Excel de equipos y el informe en `EXTRACCION_ACTAS_<fecha>` dentro de cada sede.
 - **Web** (`web/app.py`): inicia sesión con Microsoft, recibe un enlace de SharePoint de solo vista y devuelve un ZIP.
 
 ## Instalación
@@ -11,7 +11,8 @@ Dos formas de uso que comparten el mismo núcleo (`core/`):
 pip install -r requirements.txt
 ```
 
-Para el OCR (PDF escaneados) instala **Tesseract** en el equipo con el paquete de idioma español (`spa`).
+Para el OCR (PDF escaneados) instala **Tesseract** en el equipo con el paquete de idioma español (`spa`):
+`winget install UB-Mannheim.TesseractOCR` y copia `spa.traineddata` (de github.com/tesseract-ocr/tessdata_best) en su carpeta `tessdata`.
 
 ## Local
 
@@ -19,7 +20,7 @@ Para el OCR (PDF escaneados) instala **Tesseract** en el equipo con el paquete d
 python local/extraer_local.py
 ```
 
-Pide la ruta, procesa todas las sedes encontradas (o la sede, si la ruta ya es una) y escribe dentro de cada sede una carpeta `EXTRACCION_ACTAS` con todas sus actas juntas y sin comprimir, renombradas como `TIPO_ID_DD-MM-YYYY.pdf` (por ejemplo `VISITA_155_01-06-2026.pdf`). Si dos actas coinciden en nombre se añade `_2`, `_3`…
+Pide la ruta, procesa todas las sedes encontradas (o la sede, si la ruta ya es una) y escribe dentro de cada sede una carpeta nueva `EXTRACCION_ACTAS_<DD-MM-YYYY_HH-MM-SS>` (una por extracción, así se conserva el historial y nada se sobrescribe) con todas sus actas juntas y sin comprimir, renombradas como `TIPO_ID_DD-MM-YYYY.pdf` (por ejemplo `VISITA_155_01-06-2026.pdf`). Si dos actas coinciden en nombre se añade `_2`, `_3`…
 
 ## Web
 
@@ -58,6 +59,22 @@ Están en `reglas.json`, sin tocar el código:
 3. Si el texto no tiene fecha, OCR en español.
 4. Último recurso: fecha de creación guardada en el PDF (`PDF_METADATOS`, confianza BAJA, queda en `REVISAR`).
 5. Si no hay ninguna, el archivo se conserva como `FECHA_PENDIENTE` y queda en `REVISAR`.
+
+## Equipos (alcance / entrega)
+
+Con las actas de ALCANCE y ENTREGA de cada sede se generan, junto a las actas:
+
+- `EQUIPOS_<ID>.xlsx`: Fuente / Fecha / Nombre / Marca / Serial del acta **más reciente**, solo equipos con serial.
+  `Fuente` es el tipo de acta de donde sale la información (`ALCANCE` o `ENTREGA`) y `Fecha`, su fecha.
+- `INFORME_<ID>.txt`: lo que cambia frente a las actas más antiguas (coinciden, cambian de nombre, no aparecen,
+  nuevos y diferencias de marca). Si solo hay un acta, lo indica.
+
+El cruce entre actas se hace **por serial**, no por el orden de la tabla: `POE1_…` de la entrega se relaciona
+con el Punto PoE del alcance que tenga su mismo serial, y el informe muestra el nombre original.
+
+Los nombres se relacionan por palabras clave definidas en `reglas.json` (`equipos` y `marcas`):
+`AP Outdoor` del alcance = `SERIAL_APOUTDOOR_CAMBIUMNETWORKS_…` de la entrega. Para un equipo nuevo, añade su clave allí.
+Al comparar seriales, `O`/`0` e `I`/`1` se consideran iguales (errores típicos del OCR).
 
 ## Pruebas
 

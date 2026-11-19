@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import collections
 import datetime as dt
+import functools
 import logging
+import os
 import re
 import unicodedata
 
@@ -14,8 +16,8 @@ MESES = {"ENERO": 1, "FEBRERO": 2, "MARZO": 3, "ABRIL": 4, "MAYO": 5, "JUNIO": 6
 
 # Expresiones que indican la fecha del acta (de mayor a menor prioridad).
 PRIORIDAD = ["FECHA DEL ACTA", "FECHA Y HORA", "FECHA DE ELABORACION", "FECHA DE VISITA",
-             "FECHA DE ENTREGA", "FECHA DE INSTALACION", "EN LA CIUDAD DE"]
-# Si aparecen justo antes de una fecha, esa fecha se descarta.
+             "FECHA DE ENTREGA", "FECHA DE INSTALACION", "EN LA CIUDAD DE", "FECHA"]
+# Si aparecen justo antes de una fecha (y después de cualquier rótulo de PRIORIDAD), esa fecha se descarta.
 EXCLUIR = ["VENCIMIENTO", "VENCE", "VIGENCIA", "CONTRATO", "MODIFICACION", "HISTORIAL", "REFERENCIA"]
 
 RX_NUMERICA = re.compile(r"(?<!\d)(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})(?!\d)")
@@ -64,7 +66,8 @@ def fecha_desde_texto(texto: str) -> dict | None:
         if f is None:
             continue
         previo = t[max(0, ini - VENTANA):ini]
-        if any(x in previo for x in EXCLUIR):
+        # "CONTRATO ... 2024 - 2026 ... FECHA 06/02/2026": el rótulo FECHA está más cerca, se conserva.
+        if max(previo.rfind(x) for x in EXCLUIR) > max(previo.rfind(p) for p in PRIORIDAD):
             continue
         indices = [i for i, p in enumerate(PRIORIDAD) if p in previo]
         validas.append({"fecha": f, "ini": ini, "fin": fin, "prio": min(indices) if indices else None})
@@ -85,24 +88,36 @@ def fecha_desde_texto(texto: str) -> dict | None:
     return {"fecha": elegida["fecha"], "fragmento": fragmento, "confianza": confianza}
 
 
-# Ruta habitual del instalador de Tesseract en Windows, por si no está en el PATH.
-TESSERACT_WINDOWS = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Rutas habituales del instalador de Tesseract en Windows (todos los usuarios / solo el usuario).
+TESSERACT_WINDOWS = [r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                     os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe")]
 
 
-def _ocr(doc) -> str:
-    import os
-
+@functools.lru_cache(maxsize=16)  # la fecha y los equipos leen el mismo PDF: OCR una sola vez
+def ocr_pdf(datos: bytes) -> str:
+    import fitz  # PyMuPDF
     import pytesseract
     from PIL import Image
 
-    if os.path.exists(TESSERACT_WINDOWS):
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_WINDOWS
+    ruta = next((r for r in TESSERACT_WINDOWS if os.path.exists(r)), None)
+    if ruta:
+        pytesseract.pytesseract.tesseract_cmd = ruta
     partes = []
-    for pagina in doc:
-        pix = pagina.get_pixmap(dpi=300)
-        imagen = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        partes.append(pytesseract.image_to_string(imagen, lang="spa"))
+    with fitz.open(stream=datos, filetype="pdf") as doc:
+        for pagina in doc:
+            pix = pagina.get_pixmap(dpi=300)
+            imagen = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            partes.append(pytesseract.image_to_string(imagen, lang="spa"))
     return "\n".join(partes)
+
+
+def texto_pdf(datos: bytes, usar_ocr: bool = True) -> str:
+    """Texto del PDF; si casi no tiene (escaneado), el del OCR."""
+    import fitz  # PyMuPDF
+
+    with fitz.open(stream=datos, filetype="pdf") as doc:
+        texto = "\n".join(p.get_text() for p in doc)
+    return ocr_pdf(datos) if usar_ocr and len(texto.strip()) < 40 else texto
 
 
 def _fecha_metadatos(doc) -> dict | None:
@@ -130,7 +145,7 @@ def extraer_fecha_pdf(datos: bytes, usar_ocr: bool = True) -> dict | None:
         if usar_ocr:
             # El texto puede ser solo un encabezado con el cuerpo escaneado: se intenta OCR igual.
             try:
-                res = fecha_desde_texto(_ocr(doc))
+                res = fecha_desde_texto(ocr_pdf(datos))
             except Exception as e:  # noqa: BLE001
                 log.warning("OCR no disponible: %s", e)
             if res:

@@ -4,10 +4,12 @@
 Uso:
     python local/extraer_local.py
 Pide una ruta (ubicación con varias sedes, o una sede), procesa todas las sedes
-y deja en cada sede una carpeta EXTRACCION_ACTAS con las actas renombradas, sin comprimir.
+y deja en cada sede una carpeta EXTRACCION_ACTAS_<DD-MM-YYYY_HH-MM-SS> con las actas renombradas,
+el Excel de equipos y el informe de cambios.
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import sys
 from pathlib import Path
@@ -45,9 +47,11 @@ def main() -> None:
 
     print("\nProcesando...")
     resultados = procesar(fuente, sedes, reglas)
+    # Una carpeta nueva por extracción: las anteriores quedan como historial y nada se sobrescribe.
+    carpeta = f"EXTRACCION_ACTAS_{dt.datetime.now():%d-%m-%Y_%H-%M-%S}"
     for (_, ruta_sede), r in zip(sedes, resultados):
         if not r.error:
-            escribir_local(r, ruta_sede / "EXTRACCION_ACTAS")
+            escribir_local(r, ruta_sede / carpeta)
 
     print("\nResumen:")
     for r in resultados:
@@ -55,7 +59,7 @@ def main() -> None:
             print(f"  ID {r.info['id']}: ERROR - {r.error}")
         else:
             print(f"  ID {r.info['id']}: {len(r.filas)} actas encontradas")
-    print("\nResultados en la carpeta EXTRACCION_ACTAS de cada sede.")
+    print(f"\nResultados en la carpeta {carpeta} de cada sede.")
 
 
 if __name__ == "__main__":

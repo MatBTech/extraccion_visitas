@@ -19,5 +19,17 @@
       "recursivo": true,
       "tipos": ["ALCANCE", "ENTREGA", "VISITA"]
     }
-  ]
+  ],
+  "equipos": [
+    {"nombre": "Equipo última milla (Kit)", "claves": ["ULTIMAMILLA", "STARLINK", "KIT"]},
+    {"nombre": "Router", "claves": ["ROUTER", "MIKROTIK"]},
+    {"nombre": "Punto PoE", "claves": ["POE"]},
+    {"nombre": "AP Indoor", "claves": ["APINDOOR"]},
+    {"nombre": "AP Outdoor", "claves": ["APOUTDOOR"]},
+    {"nombre": "UPS interactiva 750VA", "claves": ["UPS"]}
+  ],
+  "marcas": {
+    "STARLINK": "Starlink", "MIKROTIK": "Mikrotik", "CAMBIUM": "Cambium", "CHANNELWELL": "Channel Well",
+    "EPCOM": "Epcom", "FORZA": "Forza/Powest", "POWEST": "Forza/Powest"
+  }
 }
