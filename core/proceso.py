@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import logging
+import time
 import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -34,10 +35,10 @@ class ResultadoSede:
     log: list[str] = field(default_factory=list)
     error: str | None = None
 
-    def registrar(self, mensaje: str) -> None:
+    def registrar(self, mensaje: str, nivel: int = logging.INFO) -> None:
         linea = f"[{self.info.get('id', '?')}] {mensaje}"
         self.log.append(linea)
-        log.info(linea)
+        log.log(nivel, linea, stacklevel=2)  # muestra la línea que llamó, no esta
 
 
 def _err(e: Exception) -> str:
@@ -102,7 +103,7 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
         data = fuente.leer(aref)
     except Exception as e:  # noqa: BLE001 - se registra y se sigue con las demás
         fila.update(ESTADO="FALLO_DESCARGA", OBSERVACIONES=f"descarga fallida: {_err(e)}")
-        res.registrar(f"fallo de descarga: {nombre} ({_err(e)})")
+        res.registrar(f"fallo de descarga: {nombre} ({_err(e)})", logging.ERROR)
         return fila
 
     sha = hashlib.sha256(data).hexdigest()
@@ -114,6 +115,7 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
     fecha_carp = fecha_desde_cadena(cadena) or fecha_desde_nombre(nombre)
     fecha, fuente_f, conf, frag, conflicto = None, "", "", "", "NO"
 
+    log.debug("[%s] acta %s (%s, %d bytes) en %s", info["id"], nombre, tipo, len(data), fila["RUTA_ORIGEN"])
     if fecha_carp:
         fecha, fuente_f, conf = fecha_carp, "CARPETA", "ALTA"
     else:
@@ -123,7 +125,7 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
             pdf = None
             estado = "PDF_NO_ABRE"
             obs.append(f"no se pudo leer el PDF: {_err(e)}")
-            res.registrar(f"PDF ilegible: {nombre} ({_err(e)})")
+            res.registrar(f"PDF ilegible: {nombre} ({_err(e)})", logging.WARNING)
         if pdf:
             fecha, fuente_f, conf, frag = pdf["fecha"], pdf["fuente"], pdf["confianza"], pdf["fragmento"]
             if conf == "BAJA":
@@ -147,7 +149,10 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
                 FRAGMENTO_FECHA=frag, CONFIANZA_FECHA=conf, FUENTE_FECHA=fuente_f,
                 FECHA_CARPETA=_txt_fecha(fecha_carp), CONFLICTO_FECHA=conflicto,
                 ESTADO=estado, OBSERVACIONES="; ".join(obs))
-    res.registrar(f"{nombre} -> {nombre_salida or 'duplicado'} ({estado})")
+    log.debug("[%s] fecha=%s fuente=%s confianza=%s fragmento=%r", info["id"], _txt_fecha(fecha) or "-",
+              fuente_f or "-", conf or "-", frag)
+    res.registrar(f"{nombre} -> {nombre_salida or 'duplicado'} ({estado})",
+                  logging.INFO if estado in ("OK", "DUPLICADO") else logging.WARNING)
     return fila
 
 
@@ -178,6 +183,8 @@ def _tablas_equipos(res: ResultadoSede, reglas: dict) -> list[tuple[str, bytes]]
 
 def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
     res = ResultadoSede(info=info)
+    inicio = time.perf_counter()
+    log.info("=== Sede %s (%s) ===", info.get("id", "?"), info.get("nombre", ""))
     hashes: dict[str, str] = {}
     usados: set[str] = set()  # por sede: todas las actas van juntas en la misma carpeta
 
@@ -190,7 +197,7 @@ def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
                     break
                 ref_ub = _buscar_hijo(fuente, ref_ub, segmento)
             if ref_ub is None:
-                res.registrar(f"ubicación no encontrada: {ub['salida']}")
+                res.registrar(f"ubicación no encontrada: {ub['salida']} (ruta {ub['ruta']})", logging.WARNING)
                 continue
 
             for nombre, aref, cadena in _recorrer(fuente, ref_ub, ub["recursivo"]):
@@ -201,11 +208,13 @@ def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
                                                 cadena, hashes, usados, res))
         except Exception as e:  # noqa: BLE001
             log.exception("error en la ubicación %s", ub["salida"])
-            res.registrar(f"ERROR en la ubicación {ub['salida']} (resultados parciales): {_err(e)}")
+            res.registrar(f"ERROR en la ubicación {ub['salida']} (resultados parciales): {_err(e)}",
+                          logging.ERROR)
 
     if reglas.get("equipos"):
         res.archivos += _tablas_equipos(res, reglas)
 
+    log.info("[%s] %d actas en %.1f s", info.get("id", "?"), len(res.filas), time.perf_counter() - inicio)
     return res
 
 
@@ -218,7 +227,7 @@ def procesar(fuente, sedes: Sequence[tuple[dict, object]], reglas: dict) -> list
         except Exception as e:  # noqa: BLE001
             log.exception("error en la sede %s", info.get("id", "?"))
             r = ResultadoSede(info=info, error=_err(e))
-            r.registrar(f"ERROR en la sede: {_err(e)}")
+            r.registrar(f"ERROR en la sede: {_err(e)}", logging.ERROR)
             resultados.append(r)
     return resultados
 
