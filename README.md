@@ -3,7 +3,6 @@
 Dos formas de uso que comparten el mismo núcleo (`core/`):
 
 - **Local** (`local/extraer_local.py`): lee carpetas del PC y genera un ZIP por sede.
-- **Web** (`web/app.py`): inicia sesión con Microsoft, recibe un enlace de SharePoint de solo vista y devuelve un ZIP.
 
 ## Instalación
 
