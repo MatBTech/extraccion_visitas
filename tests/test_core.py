@@ -37,6 +37,16 @@ class TestSedesYFechas(unittest.TestCase):
         self.assertEqual((info["id"], info["municipio"], info["nombre"]), ("155", "SAN RAFAEL", "QUEBRADONA"))
         self.assertEqual(carpeta_sede(info), "155_SAN_RAFAEL_QUEBRADONA")
         self.assertIsNone(parsear_sede("SOPORTE TECNICO"))
+        self.assertEqual(info["estandar"], "0155-SEDE155-SAN_RAFAEL-QUEBRADONA")
+
+    def test_normaliza_nombres_de_sede_no_estandar(self):
+        for variante in ["0155 - Sede 155 - San_Rafael - Quebradona", "sede155-san rafael-quebradona",
+                         "0155_SEDE_155-SAN__RAFAÉL-QUEBRADONA", "SEDE #155 SAN_RAFAEL-QUEBRADONA"]:
+            info = parsear_sede(variante)
+            self.assertIsNotNone(info, variante)
+            self.assertEqual(info["estandar"], "0155-SEDE155-SAN_RAFAEL-QUEBRADONA", variante)
+            self.assertEqual(carpeta_sede(info), "155_SAN_RAFAEL_QUEBRADONA", variante)
+        self.assertIsNone(parsear_sede("SEDES ANTIGUAS"))
 
     def test_fecha_en_nombre_de_carpeta(self):
         self.assertEqual(fecha_desde_nombre("01_06_2026"), dt.date(2026, 6, 1))
@@ -127,6 +137,29 @@ class TestProcesoLocal(unittest.TestCase):
         self.assertIn("VISITA_155_01-06-2026.pdf", nombres)
         self.assertIn("ALCANCE_155_FECHA_PENDIENTE.pdf", nombres)
         self.assertTrue(all(f.is_file() and f.suffix == ".pdf" for f in salida.iterdir()))
+
+    def test_error_en_una_ubicacion_no_pierde_las_demas(self):
+        class FuenteRota(FuenteLocal):
+            def hijos_archivos(self, ref):
+                if ref.name == "SOPORTE DE MEJORA":
+                    raise PermissionError("acceso denegado")
+                return super().hijos_archivos(ref)
+
+        info = parsear_sede(self.sede.name)
+        (res,) = procesar(FuenteRota(self.tmp), [(info, self.sede)], REGLAS)
+        self.assertIsNone(res.error)
+        self.assertTrue(any("PermissionError: acceso denegado" in linea for linea in res.log))
+        originales = {f["NOMBRE_ORIGINAL"] for f in res.filas}
+        self.assertIn("ACTA_VISITA_155 (1).pdf", originales)  # SOPORTE TECNICO sí se procesó
+
+    def test_reglas_invalidas_dan_mensaje_claro(self):
+        mala = self.tmp / "reglas.json"
+        mala.write_text('{"palabra_acta": "ACTA", "ubicaciones": [{"salida": "X"}]}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "ubicación #1 no tiene ruta"):
+            cargar_reglas(mala)
+        mala.write_text("{", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "no es JSON válido"):
+            cargar_reglas(mala)
 
 
 if __name__ == "__main__":

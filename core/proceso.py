@@ -10,6 +10,7 @@ import io
 import json
 import logging
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,8 +38,26 @@ class ResultadoSede:
         log.info(linea)
 
 
+def _err(e: Exception) -> str:
+    """Mensaje legible que incluye el tipo (un KeyError solo mostraría la clave)."""
+    return f"{type(e).__name__}: {e}"
+
+
 def cargar_reglas(ruta) -> dict:
-    return json.loads(Path(ruta).read_text(encoding="utf-8"))
+    """Lee reglas.json y valida su estructura para fallar con un mensaje claro y no a mitad de proceso."""
+    try:
+        reglas = json.loads(Path(ruta).read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ValueError(f"No se pudo leer {ruta}: {_err(e)}") from e
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{ruta} no es JSON válido (línea {e.lineno}, columna {e.colno}): {e.msg}") from e
+    if not isinstance(reglas.get("palabra_acta"), str) or not isinstance(reglas.get("ubicaciones"), list):
+        raise ValueError(f"{ruta}: faltan 'palabra_acta' (texto) o 'ubicaciones' (lista).")
+    for i, ub in enumerate(reglas["ubicaciones"]):
+        faltan = [k for k in ("salida", "ruta", "recursivo", "tipos") if k not in ub]
+        if faltan:
+            raise ValueError(f"{ruta}: la ubicación #{i + 1} no tiene {', '.join(faltan)}.")
+    return reglas
 
 
 def _buscar_hijo(fuente, ref, segmento: str):
@@ -80,8 +99,8 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
     try:
         data = fuente.leer(aref)
     except Exception as e:  # noqa: BLE001 - se registra y se sigue con las demás
-        fila.update(ESTADO="FALLO_DESCARGA", OBSERVACIONES=f"descarga fallida: {e}")
-        res.registrar(f"fallo de descarga: {nombre}")
+        fila.update(ESTADO="FALLO_DESCARGA", OBSERVACIONES=f"descarga fallida: {_err(e)}")
+        res.registrar(f"fallo de descarga: {nombre} ({_err(e)})")
         return fila
 
     sha = hashlib.sha256(data).hexdigest()
@@ -101,7 +120,8 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
         except Exception as e:  # noqa: BLE001
             pdf = None
             estado = "PDF_NO_ABRE"
-            obs.append(f"no se pudo leer el PDF: {e}")
+            obs.append(f"no se pudo leer el PDF: {_err(e)}")
+            res.registrar(f"PDF ilegible: {nombre} ({_err(e)})")
         if pdf:
             fecha, fuente_f, conf, frag = pdf["fecha"], pdf["fuente"], pdf["confianza"], pdf["fragmento"]
             if conf == "BAJA":
@@ -135,34 +155,40 @@ def procesar_sede(fuente, ref, info: dict, reglas: dict) -> ResultadoSede:
     usados: set[str] = set()  # por sede: todas las actas van juntas en la misma carpeta
 
     for ub in reglas["ubicaciones"]:
-        ref_ub = ref
-        for segmento in ub["ruta"]:
+        # Un error al listar una ubicación (permisos, red) no descarta lo ya hallado en las demás.
+        try:
+            ref_ub = ref
+            for segmento in ub["ruta"]:
+                if ref_ub is None:
+                    break
+                ref_ub = _buscar_hijo(fuente, ref_ub, segmento)
             if ref_ub is None:
-                break
-            ref_ub = _buscar_hijo(fuente, ref_ub, segmento)
-        if ref_ub is None:
-            res.registrar(f"ubicación no encontrada: {ub['salida']}")
-            continue
-
-        for nombre, aref, cadena in _recorrer(fuente, ref_ub, ub["recursivo"]):
-            tipo = es_acta(nombre, info["id"], ub["tipos"], reglas["palabra_acta"])
-            if tipo is None:
+                res.registrar(f"ubicación no encontrada: {ub['salida']}")
                 continue
-            res.filas.append(_procesar_acta(fuente, aref, nombre, tipo, ub, info,
-                                            cadena, hashes, usados, res))
+
+            for nombre, aref, cadena in _recorrer(fuente, ref_ub, ub["recursivo"]):
+                tipo = es_acta(nombre, info["id"], ub["tipos"], reglas["palabra_acta"])
+                if tipo is None:
+                    continue
+                res.filas.append(_procesar_acta(fuente, aref, nombre, tipo, ub, info,
+                                                cadena, hashes, usados, res))
+        except Exception as e:  # noqa: BLE001
+            log.exception("error en la ubicación %s", ub["salida"])
+            res.registrar(f"ERROR en la ubicación {ub['salida']} (resultados parciales): {_err(e)}")
 
     return res
 
 
-def procesar(fuente, sedes: list[tuple[dict, object]], reglas: dict) -> list[ResultadoSede]:
+def procesar(fuente, sedes: Sequence[tuple[dict, object]], reglas: dict) -> list[ResultadoSede]:
     """Procesa cada sede por separado; un error en una no detiene a las demás."""
     resultados = []
     for info, ref in sedes:
         try:
             resultados.append(procesar_sede(fuente, ref, info, reglas))
         except Exception as e:  # noqa: BLE001
-            r = ResultadoSede(info=info, error=str(e))
-            r.registrar(f"error en la sede: {e}")
+            log.exception("error en la sede %s", info.get("id", "?"))
+            r = ResultadoSede(info=info, error=_err(e))
+            r.registrar(f"ERROR en la sede: {_err(e)}")
             resultados.append(r)
     return resultados
 
