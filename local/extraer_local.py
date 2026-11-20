@@ -4,8 +4,8 @@
 Uso:
     python local/extraer_local.py
 Pide una ruta (ubicación con varias sedes, o una sede), procesa todas las sedes
-y deja en cada sede una carpeta EXTRACCION_ACTAS_<DD-MM-YYYY_HH-MM-SS> con las actas renombradas,
-el Excel de equipos y el informe de cambios.
+y deja en Descargas/reportes/<sede>/EXTRACCION_ACTAS_<DD-MM-YYYY_HH-MM-SS> las actas renombradas,
+el Excel de equipos y el informe de cambios (temporal: no se escribe nada en la carpeta original).
 """
 from __future__ import annotations
 
@@ -107,6 +107,9 @@ def main() -> None:
     log.info("Procesando...")
     # Una carpeta nueva por extracción: las anteriores quedan como historial y nada se sobrescribe.
     carpeta = f"EXTRACCION_ACTAS_{dt.datetime.now():%d-%m-%Y_%H-%M-%S}"
+    # shortcut: temporal para pruebas masivas desde la nube; los resultados (archivos gubernamentales) van a
+    # Descargas/reportes/<sede> de este equipo y no a la carpeta original. Volver a ruta_sede / carpeta al terminar.
+    reportes = Path.home() / "Downloads" / "reportes"
     errores_escritura = {}
     resultados = []
     # Cada sede se escribe al terminarla: con cientos de sedes, un corte no pierde lo ya hecho.
@@ -122,11 +125,12 @@ def main() -> None:
             continue
         # Una sede bloqueada (archivo abierto, OneDrive, permisos) no impide escribir las demás.
         try:
-            escribir_local(r, ruta_sede / carpeta)
-            log.info("[%d/%d] Sede %s escrita en %s", n, len(sedes), r.info["id"], ruta_sede / carpeta)
+            destino = reportes / ruta_sede.name / carpeta
+            escribir_local(r, destino)
+            log.info("[%d/%d] Sede %s escrita en %s", n, len(sedes), r.info["id"], destino)
         except OSError as e:
             log.exception("No se pudo escribir la sede %s", r.info["id"])
-            errores_escritura[r.info["id"]] = f"no se pudo escribir en {ruta_sede}: {e}"
+            errores_escritura[r.info["id"]] = f"no se pudo escribir en {reportes / ruta_sede.name}: {e}"
         r.archivos = []  # libera los PDF de memoria; el resumen solo usa filas y log
 
     print("\nResumen:")
@@ -139,7 +143,7 @@ def main() -> None:
             avisos = sum(1 for linea in r.log if "ERROR en la ubicación" in linea)
             extra = f" ({avisos} ubicaciones con error, ver {archivo_log.name})" if avisos else ""
             print(f"  ID {r.info['id']}: {len(r.filas)} actas encontradas{extra}")
-    print(f"\nResultados en la carpeta {carpeta} de cada sede.")
+    print(f"\nResultados en {reportes}\\<sede>\\{carpeta}")
     hubo_error = bool(errores_escritura or any(r.error for r in resultados))
     log.info("Fin en %.1f s. Sedes: %d, actas: %d, con error: %s. Log: %s",
              time.perf_counter() - inicio, len(resultados), sum(len(r.filas) for r in resultados),
