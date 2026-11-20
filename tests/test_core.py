@@ -10,7 +10,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
 
-from core.equipos import (cambios_desde_observaciones, comparar, equipos_desde_texto, excel_bytes,  # noqa: E402
+from core.equipos import (cambios_desde_observaciones, comparar, equipos_desde_texto, excel_bytes, excel_consolidado,  # noqa: E402
                           informe_bytes, observaciones_desde_texto, seguir_cambios)
 from core.fechas import extraer_fecha_pdf, fecha_desde_texto  # noqa: E402
 from core.fuentes import FuenteLocal  # noqa: E402
@@ -351,6 +351,18 @@ class TestObservaciones(unittest.TestCase):
         suelto = final[("AP Outdoor", "WBBM0322FZ9H")]  # cambio sin equipo del acta que lo explique
         self.assertEqual((suelto[4], suelto[6]), ("No está en el acta base", "WBCA05QRCH4L"))
         self.assertTrue(suelto[12].startswith("REVISAR"))
+
+        # Consolidado: una sede con cambios y otra sin ellos; las hojas se apilan con un solo encabezado.
+        otra = excel_bytes(parsear_sede("0200-SEDE200-ANDES-CENTRO"), alcance, [], [])
+        global_ = load_workbook(io.BytesIO(excel_consolidado([otra, excel_bytes(
+            parsear_sede("0155-SEDE155-SAN_RAFAEL-QUEBRADONA"), alcance, cambios, [])])))
+        self.assertEqual(global_.sheetnames[0], "Final")
+        ids = [f[0] for f in global_["Final"].iter_rows(min_row=2, values_only=True)]
+        self.assertEqual(len(ids), ids.count("200") + len(final))
+        self.assertTrue(ids.count("200"))
+        self.assertEqual(ids[0], "200")
+        self.assertEqual(ids[-1], "155")
+        self.assertEqual(len(list(global_["Cambios de serial"].iter_rows())), 7)
 
 
 if __name__ == "__main__":

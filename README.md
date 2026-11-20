@@ -64,6 +64,8 @@ Las carpetas de sede deben llamarse `NNNN-SEDENNN-MUNICIPIO-NOMBRE` (por ejemplo
 - Las actas renombradas como `TIPO_ID_NOMBRESEDE_DD-MM-YYYY.pdf` (por ejemplo `VISITA_155_QUEBRADONA_01-06-2026.pdf`). Si dos coinciden en nombre se añade `_2`, `_3`…
 - `EQUIPOS_<ID>.xlsx` e `INFORME_<ID>.txt` (ver [Equipos](#equipos-alcance--entrega)).
 
+Además, en `Descargas\reportes\` queda `CONSOLIDADO_EQUIPOS_<DD-MM-YYYY_HH-MM-SS>.xlsx`: los Excel de todas las sedes en uno solo, con las mismas hojas (Final, Equipos, Cambios de serial, Observaciones) una sede debajo de otra. Si se cancela con Ctrl+C, se escribe igual con las sedes ya terminadas.
+
 Los archivos originales no se modifican.
 
 Al terminar se muestra un resumen por sede (actas encontradas o error). Si una sede no se puede escribir (archivo abierto, OneDrive sincronizando, permisos), las demás se escriben igual.

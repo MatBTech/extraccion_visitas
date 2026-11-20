@@ -60,6 +60,7 @@ def main() -> None:
     log.info("Inicio. Log detallado en: %s", archivo_log)
     log.debug("Python %s | ejecutable %s", sys.version.split()[0], sys.executable)
     # Se importan aquí para que una dependencia faltante quede registrada en el log.
+    from core.equipos import excel_consolidado
     from core.fuentes import FuenteLocal
     from core.proceso import cargar_reglas, escribir_local, procesar
     from core.texto import parsear_sede
@@ -112,6 +113,19 @@ def main() -> None:
     reportes = Path.home() / "Downloads" / "reportes"
     errores_escritura = {}
     resultados = []
+    libros = []  # EQUIPOS_<id>.xlsx de cada sede, para el consolidado
+    consolidado = reportes / f"CONSOLIDADO_EQUIPOS_{carpeta.removeprefix('EXTRACCION_ACTAS_')}.xlsx"
+
+    def escribir_consolidado() -> None:
+        if not libros:
+            return
+        try:
+            reportes.mkdir(parents=True, exist_ok=True)
+            consolidado.write_bytes(excel_consolidado(libros))
+            log.info("Consolidado de %d sedes en %s", len(libros), consolidado)
+        except Exception:  # noqa: BLE001 — los Excel por sede ya quedaron escritos
+            log.exception("No se pudo escribir el consolidado %s", consolidado)
+
     # Cada sede se escribe al terminarla: con cientos de sedes, un corte no pierde lo ya hecho.
     for n, (info, ruta_sede) in enumerate(sedes, 1):
         try:
@@ -119,8 +133,10 @@ def main() -> None:
         except KeyboardInterrupt:
             log.warning("Cancelado por el usuario en la sede %d de %d; las anteriores ya quedaron escritas.",
                         n, len(sedes))
+            escribir_consolidado()
             sys.exit(130)
         resultados.append(r)
+        libros += [datos for nombre, datos in r.archivos if nombre.startswith("EQUIPOS_")]
         if r.error:
             continue
         # Una sede bloqueada (archivo abierto, OneDrive, permisos) no impide escribir las demás.
@@ -133,6 +149,7 @@ def main() -> None:
             errores_escritura[r.info["id"]] = f"no se pudo escribir en {reportes / ruta_sede.name}: {e}"
         r.archivos = []  # libera los PDF de memoria; el resumen solo usa filas y log
 
+    escribir_consolidado()
     print("\nResumen:")
     for r in resultados:
         if r.error:
@@ -144,6 +161,8 @@ def main() -> None:
             extra = f" ({avisos} ubicaciones con error, ver {archivo_log.name})" if avisos else ""
             print(f"  ID {r.info['id']}: {len(r.filas)} actas encontradas{extra}")
     print(f"\nResultados en {reportes}\\<sede>\\{carpeta}")
+    if consolidado.exists():
+        print(f"Consolidado de todas las sedes: {consolidado}")
     hubo_error = bool(errores_escritura or any(r.error for r in resultados))
     log.info("Fin en %.1f s. Sedes: %d, actas: %d, con error: %s. Log: %s",
              time.perf_counter() - inicio, len(resultados), sum(len(r.filas) for r in resultados),

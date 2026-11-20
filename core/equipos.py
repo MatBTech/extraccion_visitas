@@ -316,6 +316,24 @@ def excel_bytes(sede: dict, actual: dict | None, cambios: list[dict] = (), obser
     return buf.getvalue()
 
 
+def excel_consolidado(libros: list[bytes]) -> bytes:
+    """Une los EQUIPOS_<id>.xlsx de varias sedes: misma hoja una debajo de otra (cada fila ya trae ID y Carpeta)."""
+    from openpyxl import Workbook, load_workbook
+
+    hojas: dict[str, tuple[list, list]] = {}  # título -> (encabezado, filas), en orden de aparición
+    for datos in libros:
+        for hoja in load_workbook(io.BytesIO(datos), read_only=True):
+            filas = list(hoja.iter_rows(values_only=True))
+            if filas:
+                hojas.setdefault(hoja.title, (list(filas[0]), []))[1].extend(list(f) for f in filas[1:])
+    libro = Workbook()
+    for n, (titulo, (columnas, filas)) in enumerate(hojas.items()):
+        _hoja(libro, titulo, columnas, filas, primera=n == 0)
+    buf = io.BytesIO()
+    libro.save(buf)
+    return buf.getvalue()
+
+
 def informe_bytes(id_sede: str, actual: dict, cambios: list[dict]) -> bytes:
     """Informe en texto de lo que cambia entre el acta más reciente y las anteriores."""
     lineas = [f"INFORME DE EQUIPOS - SEDE {id_sede}",
