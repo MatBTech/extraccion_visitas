@@ -217,10 +217,10 @@ class TestProcesoLocal(unittest.TestCase):
 
         # Sin fecha en carpeta ni PDF legible: queda como FECHA_PENDIENTE
         self.assertEqual(por_original["ACTA_ALCANCE_ID#155.pdf"]["NOMBRE_NORMALIZADO"],
-                         "ALCANCE_155_FECHA_PENDIENTE.pdf")
+                         "ALCANCE_155_QUEBRADONA_FECHA_PENDIENTE.pdf")
         # Fecha tomada de la carpeta 01_06_2026
         self.assertEqual(por_original["ACTA_VISITA_155 (1).pdf"]["NOMBRE_NORMALIZADO"],
-                         "VISITA_155_01-06-2026.pdf")
+                         "VISITA_155_QUEBRADONA_01-06-2026.pdf")
         self.assertEqual(por_original["ACTA_VISITA_155 (1).pdf"]["FUENTE_FECHA"], "CARPETA")
         # Mismo contenido que otra acta: se marca como duplicado y no se copia
         self.assertEqual(por_original["ACTA_ENTREGA_ID155.pdf"]["ESTADO"], "DUPLICADO")
@@ -231,8 +231,8 @@ class TestProcesoLocal(unittest.TestCase):
         salida = self.sede / "EXTRACCION_ACTAS"
         escribir_local(res, salida)
         nombres = {f.name for f in salida.iterdir()}
-        self.assertIn("VISITA_155_01-06-2026.pdf", nombres)
-        self.assertIn("ALCANCE_155_FECHA_PENDIENTE.pdf", nombres)
+        self.assertIn("VISITA_155_QUEBRADONA_01-06-2026.pdf", nombres)
+        self.assertIn("ALCANCE_155_QUEBRADONA_FECHA_PENDIENTE.pdf", nombres)
         self.assertTrue(all(f.is_file() and f.suffix == ".pdf" for f in salida.iterdir()))
 
     def test_error_en_una_ubicacion_no_pierde_las_demas(self):

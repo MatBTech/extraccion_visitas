@@ -80,9 +80,10 @@ def _recorrer(fuente, ref, recursivo: bool, cadena: tuple[str, ...] = ()):
             yield from _recorrer(fuente, r, True, cadena + (nombre,))
 
 
-def _nombre_salida(tipo: str, id_sede: str, fecha, usados: set[str]) -> str:
+def _nombre_salida(tipo: str, info: dict, fecha, usados: set[str]) -> str:
     sufijo = fecha.strftime("%d-%m-%Y") if fecha else "FECHA_PENDIENTE"
-    base = f"{tipo}_{id_sede}_{sufijo}"
+    sede = info["nombre"].replace(" ", "_")
+    base = "_".join(p for p in (tipo, info["id"], sede, sufijo) if p)
     nombre, n = f"{base}.pdf", 2
     while nombre in usados:
         nombre = f"{base}_{n}.pdf"
@@ -142,7 +143,7 @@ def _procesar_acta(fuente, aref, nombre, tipo, ub, info, cadena, hashes, usados,
         obs.append(f"idéntico a {hashes[sha]}")
         nombre_salida = ""
     else:
-        nombre_salida = _nombre_salida(tipo, info["id"], fecha, usados)
+        nombre_salida = _nombre_salida(tipo, info, fecha, usados)
         hashes[sha] = nombre_salida
         res.archivos.append((nombre_salida, data))
 

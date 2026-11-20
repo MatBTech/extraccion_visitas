@@ -61,7 +61,7 @@ Las carpetas de sede deben llamarse `NNNN-SEDENNN-MUNICIPIO-NOMBRE` (por ejemplo
 
 Dentro de cada sede se crea una carpeta nueva `EXTRACCION_ACTAS_<DD-MM-YYYY_HH-MM-SS>`, una por cada ejecución: las anteriores no se tocan y quedan como historial. Contiene:
 
-- Las actas renombradas como `TIPO_ID_DD-MM-YYYY.pdf` (por ejemplo `VISITA_155_01-06-2026.pdf`). Si dos coinciden en nombre se añade `_2`, `_3`…
+- Las actas renombradas como `TIPO_ID_NOMBRESEDE_DD-MM-YYYY.pdf` (por ejemplo `VISITA_155_QUEBRADONA_01-06-2026.pdf`). Si dos coinciden en nombre se añade `_2`, `_3`…
 - `EQUIPOS_<ID>.xlsx` e `INFORME_<ID>.txt` (ver [Equipos](#equipos-alcance--entrega)).
 
 Los archivos originales no se modifican.
